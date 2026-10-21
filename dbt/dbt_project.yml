@@ -1,0 +1,15 @@
+name: market_surveillance
+version: "1.0.0"
+config-version: 2
+profile: market_surveillance
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  market_surveillance:
+    silver:
+      +materialized: incremental
+      +table_type: iceberg
+      +schema: silver

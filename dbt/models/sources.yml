@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: >
+      Raw MBO data landed by the ingestion pipeline (src/ingestion). Contract-
+      validated at write time: prices DECIMAL(18,9), microsecond UTC timestamps,
+      signed integers. Written by PyIceberg with hidden partitions
+      days(ts_event) + identity(symbol).
+    schema: market_surveillance_bronze
+    tables:
+      - name: itch_mbo
+        description: >
+          One row per market-message event (add/modify/cancel/trade/fill) per
+          symbol. Append-only via daily snapshots carrying pipeline lineage
+          (pipeline.symbol, pipeline.day).

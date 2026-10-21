@@ -1,0 +1,37 @@
+version: 2
+
+models:
+  - name: itch_mbo_cleaned
+    description: >
+      Deduplicated MBO message stream. Same grain as bronze (one row per
+      message event); partitions are rebuilt atomically day-by-day via
+      insert_overwrite, making reruns of any trading day safe.
+    columns:
+      - name: symbol
+        description: Raw Databento symbol (identity partition).
+        data_tests: [not_null]
+      - name: ts_event
+        description: Exchange event time, microsecond UTC.
+        data_tests: [not_null]
+      - name: action
+        description: >
+          Message action code: A=add, M=modify, C=cancel, T=trade, F=fill.
+          Refresh records (R, rtype 160 instrument-definition refreshes; no
+          price, one per trading day) are excluded from silver — the model
+          filters them; this test enforces they never reappear.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['A', 'M', 'C', 'T', 'F']
+      - name: side
+        description: >
+          Order side. A=ask, B=bid, N=not-applicable (system rows).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['A', 'B', 'N']
+      - name: price
+        description: Price as DECIMAL(18,9); NULL on system rows (DBN UNDEF sentinel).
+      - name: ts_event_day
+        description: Trading day derived from ts_event (identity partition).
+        data_tests: [not_null]
