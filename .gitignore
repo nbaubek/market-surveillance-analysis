@@ -1,0 +1,109 @@
+# --- Python ---
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+.pytest_cache/
+
+# Distribution / packaging
+build/
+dist/
+sdist/
+wheels/
+*.egg-info/
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+coverage.xml
+.pytest_cache/
+.hypothesis/
+
+# Type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Cython debug symbols
+cython_debug/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Documentation builds
+docs/_build/
+site/
+
+# Local data staging
+data/
+
+# --- dbt ---
+
+# Compilation artifacts and packages
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# --- Terraform ---
+
+# Local .terraform directories
+**/.terraform/*
+
+# .tfstate files
+*.tfstate
+*.tfstate.*
+
+# Crash log files
+crash.log
+crash.*.log
+
+# .tfvars files (may contain sensitive values)
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Transient lock info
+.terraform.tfstate.lock.info
+
+# Plan output
+*.tfplan
+
+# Terraform CLI config with credentials
+.terraformrc
+terraform.rc
+
+# System specific files
+.DS_Store
+Thumbs.db
+
+.vscode/
+.idea/
