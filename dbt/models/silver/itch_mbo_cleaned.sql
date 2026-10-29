@@ -44,8 +44,9 @@
 -- rows match the same target row, so the merged source must carry exactly one
 -- row per message_key (first ts_recv wins).
 --
--- Refresh records (action = 'R', rtype 160 instrument-definition refreshes)
--- are excluded — see silver.yml.
+-- Book-clear records (action = 'R') — the clear-book part of Databento's
+-- synthetic start-of-day order-book snapshot, not market activity — are
+-- excluded. See silver.yml.
 --
 -- Partition columns MUST be the final columns of the SELECT (Athena CTAS rule).
 
@@ -102,6 +103,8 @@ keyed as (
 )
 
 -- Partition columns last (Athena CTAS rule).
+-- ts_in_delta is dropped: on XNAS.ITCH it is redundant by construction
+-- (ts_recv - ts_event, both of which are kept). See dataset-info.md.
 select
     message_key,
     ts_event,
@@ -115,7 +118,6 @@ select
     channel_id,
     order_id,
     flags,
-    ts_in_delta,
     sequence,
     ts_recv,
     symbol,

@@ -25,14 +25,16 @@ models:
         data_tests: [not_null]
       - name: action
         description: >
-          Message action code: A=add, M=modify, C=cancel, T=trade, F=fill.
-          Refresh records (R, rtype 160 instrument-definition refreshes; no
-          price, one per trading day) are excluded from silver — the model
-          filters them; this test enforces they never reappear.
+          Message action code: A=add, M=modify, C=cancel, T=trade, F=fill,
+          N=none (cross trades and other side-less events). Book-clear
+          records (R) — the clear-book part of Databento's synthetic
+          start-of-day order-book snapshot, no price, one per trading day —
+          are not market activity and are excluded from silver; the model
+          filters them and this test enforces they never reappear.
         data_tests:
           - accepted_values:
               arguments:
-                values: ['A', 'M', 'C', 'T', 'F']
+                values: ['A', 'M', 'C', 'T', 'F', 'N']
       - name: side
         description: >
           Order side. A=ask, B=bid, N=not-applicable (system rows).
