@@ -75,7 +75,9 @@ Athena query results land under `s3://trading-surveillance-data/athena-results/`
 
 ---
 
-## Orchestration
+## Orchestration with Dagster+
+
+- Use Dagster's built-in logging in order to analyze logs if needed
 
 
 ---
