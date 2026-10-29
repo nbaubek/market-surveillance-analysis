@@ -6,8 +6,81 @@ streaming ingestion → Apache Iceberg medallion (bronze/silver/gold) on AWS
 
 - Ingestion CLI: `src/ingestion/` (`uv run --env-file .env python -m src.ingestion.ingest`)
 - Infrastructure: `infra/` (Terraform: bucket, Glue database, Athena workgroup)
+- Transformation: `dbt/` (silver model — see "dbt: silver layer" below)
 - Iceberg maintenance queries: `iceberg-maintain-queries.md`
 - Data contract: `src/ingestion/schema.py` (see `CLAUDE.md` for the full contract notes)
+- Source dataset reference: `dataset-info.md` (Databento XNAS.ITCH normalization)
+
+## dbt: silver layer
+
+One model today: `itch_mbo_cleaned` (`dbt/models/silver/`) — an Apache Iceberg
+table in `market_surveillance_silver`, built from the bronze source.
+
+**What it does.** Takes the raw MBO stream at the same message-level grain and:
+
+- deduplicates on the full message identity (symbol, ts_event, sequence,
+  order_id, action, price, size — first `ts_recv` wins);
+- excludes `R` book-clear records (the clear-book part of Databento's
+  synthetic start-of-day snapshot — not market activity; one per trading day);
+- adds `message_key`, a null-safe md5 surrogate of the message identity —
+  the MERGE key (raw columns can't be joined on: SQL `=` never matches NULL,
+  and system rows carry NULL price/order_id);
+- derives `ts_event_day` (identity partition column) and drops `ts_in_delta`
+  (redundant on XNAS.ITCH: `ts_recv − ts_event`, both kept).
+
+**Why merge.** Incremental strategy is `merge` on `message_key`: matched
+messages update in place with identical values, unseen ones insert. Since
+Databento delivers complete immutable days, *re-running any date range is
+idempotent* — there is no high-water mark and no forward-only constraint.
+`dbt test` (6 tests) enforces not-null keys and accepted action/side values,
+including that R records never reappear.
+
+### Running
+
+From `dbt/` (profile: `dbt/profiles.yml`, Athena target, `s3_data_dir` pinned
+under `silver/` to stay outside the 30-day lifecycle prefix):
+
+```
+dbt run  --select itch_mbo_cleaned   # build
+dbt test --select itch_mbo_cleaned   # enforce
+```
+
+With no vars, the model runs in **catch-up mode**: every run re-processes a
+5-day rolling window (`ts_event >= current_date - interval '5' day`). For
+the current historical dataset this is a cheap no-op; it becomes the daily
+scheduled mode once ingestion moves to current data and Dagster lands.
+
+### Backfilling
+
+**Manual range (end date inclusive, partition-pruned):**
+
+```
+dbt run --select itch_mbo_cleaned \
+  --vars '{"start_date": "2025-01-01", "end_date": "2025-01-31"}'
+```
+
+Both vars must be passed together (compiler error otherwise). `--full-refresh`
+ignores the window entirely and rebuilds the table from all of bronze.
+
+**End-to-end backfill workflow (ingest → transform):**
+
+1. Bronze first — the ingestion CLI is idempotent per (symbol, day) via
+   catalog checks, in the same two modes (`--end` is *exclusive*):
+   ```
+   uv run --env-file .env python -m src.ingestion.ingest \
+     --symbols MSFT AAPL --start 2025-01-01 --end 2025-02-01
+   ```
+   Omitting `--start/--end` requests the last `--lookback-days` calendar
+   days (default 5, UTC).
+2. Silver second — always run dbt after ingesting, for the same dates with
+   the end date inclusive (one day later than the CLI's exclusive end).
+3. Re-running any step is safe: bronze skips days already in the catalog,
+   silver re-merges idempotently. Gaps or corrections: re-run bronze for the
+   range, then dbt with the same vars. Full rebuild after a model change:
+   `dbt run --full-refresh --select itch_mbo_cleaned`.
+4. Weekends/holidays inside a range are fine — Databento simply has no files
+   for non-trading days, so the steps no-op for them. Calendar ranges can be
+   passed directly.
 
 ## Bucket lifecycle: the 30-day rule
 
