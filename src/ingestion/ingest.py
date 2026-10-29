@@ -13,6 +13,7 @@ Run from the repo root:
 """
 
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import click
@@ -26,8 +27,7 @@ from src.ingestion.schema import SchemaContract, build_partition_spec
 from src.ingestion.spec import ExtractSpec
 
 DEFAULT_SYMBOLS = ("MSFT",)
-DEFAULT_START = "2019-07-30"
-DEFAULT_END = "2019-07-31"  # exclusive
+DEFAULT_LOOKBACK_DAYS = 5
 DEFAULT_BUCKET = "trading-surveillance-data"
 DEFAULT_DATABASE = "market_surveillance_bronze"
 DEFAULT_TABLE = "itch_mbo"
@@ -36,8 +36,15 @@ DEFAULT_REGION = "us-east-1"
 
 @click.command()
 @click.option("--symbols", multiple=True, default=DEFAULT_SYMBOLS, show_default=True)
-@click.option("--start", default=DEFAULT_START, show_default=True)
-@click.option("--end", default=DEFAULT_END, show_default=True, help="Exclusive bound.")
+@click.option("--start", default=None, help="Inclusive start (YYYY-MM-DD). Backfill mode.")
+@click.option("--end", default=None, help="Exclusive end (YYYY-MM-DD). Backfill mode.")
+@click.option(
+    "--lookback-days",
+    type=int,
+    default=DEFAULT_LOOKBACK_DAYS,
+    show_default=True,
+    help="Catch-up mode (when --start/--end are omitted): request the last N calendar days, UTC.",
+)
 @click.option("--bucket", default=DEFAULT_BUCKET, show_default=True)
 @click.option("--database", default=DEFAULT_DATABASE, show_default=True)
 @click.option("--table", default=DEFAULT_TABLE, show_default=True)
@@ -51,15 +58,36 @@ DEFAULT_REGION = "us-east-1"
 )
 def ingest(
     symbols: tuple[str, ...],
-    start: str,
-    end: str,
+    start: str | None,
+    end: str | None,
     bucket: str,
     database: str,
     table: str,
     region: str,
     chunk_rows: int,
+    lookback_days: int,
 ) -> None:
-    """Stream Databento MBO data into the bronze Iceberg table."""
+    """Stream Databento MBO data into the bronze Iceberg table.
+
+    Two modes: pass --start/--end for an explicit backfill range, or omit
+    both for a catch-up window over the last --lookback-days calendar days.
+    Idempotent per (symbol, day) either way: days already in the catalog are
+    skipped, so repeated catch-up runs are cheap no-ops.
+    """
+    if (start is None) != (end is None):
+        raise click.UsageError(
+            "--start and --end must be provided together, or both omitted "
+            "for catch-up mode."
+        )
+
+    if start is None:
+        end_day = datetime.now(timezone.utc).date()
+        start_day = end_day - timedelta(days=lookback_days)
+        click.echo(
+            f"catch-up mode: requesting {start_day} .. {end_day} (exclusive)"
+        )
+        start, end = str(start_day), str(end_day)
+
     spec = ExtractSpec(symbols=list(symbols), start=start, end=end)
     try:
         client = DatabentoClient()
