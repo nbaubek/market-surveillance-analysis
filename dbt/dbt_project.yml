@@ -13,3 +13,11 @@ models:
       +materialized: incremental
       +table_type: iceberg
       +schema: silver
+    gold:
+      +materialized: table
+      +table_type: iceberg
+      +schema: gold
+      # Iceberg 'table' builds REQUIRE unique naming (the adapter swaps the
+      # table via rename, so each rebuild needs a fresh path; 'external_location'
+      # is rejected). table_unique -> <s3_data_dir>/<table>/<uuid>/.
+      +s3_data_naming: table_unique

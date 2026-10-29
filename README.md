@@ -13,8 +13,17 @@ streaming ingestion → Apache Iceberg medallion (bronze/silver/gold) on AWS
 
 ## dbt: silver layer
 
-One model today: `itch_mbo_cleaned` (`dbt/models/silver/`) — an Apache Iceberg
-table in `market_surveillance_silver`, built from the bronze source.
+Two models today:
+
+- **`itch_mbo_cleaned`** (`dbt/models/silver/`) — an Apache Iceberg table in
+  `market_surveillance_silver`, built incrementally from the bronze source.
+- **`hourly_liquidity_metrics`** (`dbt/models/gold/`) — an Apache Iceberg
+  table in `market_surveillance_gold`, rebuilt fully each run (gold volume
+  is tiny): hourly liquidity metrics per (symbol, day, UTC hour) — messages,
+  adds, standalone cancels (surveillance-grade: excludes mechanical
+  execution/replace legs), tape trades, fills, volume, VWAP, cancel-to-add
+  ratio. Metric semantics follow the verified message rules in
+  `gold-layer-plan.md`.
 
 **What it does.** Takes the raw MBO stream at the same message-level grain and:
 

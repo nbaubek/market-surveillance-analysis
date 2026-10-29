@@ -59,7 +59,14 @@ sessions (GTC orders). Databento injects a synthetic start-of-day snapshot
 precisely to seed state; decide later whether replay consumes bronze
 (R + snapshot state) or silver accepts the open distortion.
 
-## Phase 1 — `hourly_liquidity_metrics` (first model)
+## Phase 1 — `hourly_liquidity_metrics` (built, verified)
+
+Status: model lives at `dbt/models/gold/hourly_liquidity_metrics.sql`; sums
+tie out exactly to silver (messages/trades/adds/cancels/fills/
+standalone_cancels, 4 days). Materialized as Iceberg `table` (full CTAS
+rebuild per run — see open question 4) partitioned by `identity(ts_event_day)`,
+under `s3://trading-surveillance-data/gold/`. Hours with zero messages
+produce no row (overnight silence); BI tools cross-fill.
 
 Per (symbol, ts_event_day, hour):
 
@@ -116,12 +123,15 @@ prices (Roll estimator or high-low), documented as approximate.
 1. Indicator thresholds: percentile basis for "large order", burst window size.
 2. Session handling: UTC hours vs exchange hours (pre/post-market split)?
 3. Spread: full reconstruction (phase 3) vs approximation vs skip.
-4. Refresh: gold tables are small — full rebuild per run is acceptable
-   (aligns with the header). If incremental is ever wanted, mirror silver's
-   merge window/backfill pattern, not a high-water mark.
-5. Table location: profile `s3_data_dir` currently pins dbt tables under
-   `silver/` — gold needs either per-model location override
-   (`external_location`) or accepting a shared prefix. Resolve when building.
+4. RESOLVED: gold models are Iceberg `table` materialization — full CTAS
+   rebuild per run (volume is tiny). If incremental is ever wanted, mirror
+   silver's merge window/backfill pattern, not a high-water mark.
+5. RESOLVED (with an adapter twist): `external_location` is REJECTED for
+   Iceberg `table` builds — dbt-athena requires `s3_data_naming` containing
+   `unique` (rename-based swap needs a fresh path per rebuild). Gold folder
+   sets `+s3_data_naming: table_unique`; each model overrides
+   `s3_data_dir='s3://trading-surveillance-data/gold'` (profile-level
+   `s3_data_dir` stays pinned to `silver/` for incremental silver models).
 6. Dashboard tool choice (Tableau Public vs Power BI Desktop) — affects
    nothing upstream, decides late.
 7. RESOLVED (verified on silver, 2026-10-29): `sequence` resets each trading

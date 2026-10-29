@@ -1,0 +1,53 @@
+version: 2
+
+models:
+  - name: hourly_liquidity_metrics
+    description: >
+      Gold Phase 1: hourly liquidity metrics per (symbol, ts_event_day,
+      hour) over the silver message stream. Full rebuild every run (gold
+      volume is tiny). Cancel semantics follow the verified message rules
+      in gold-layer-plan.md: standalone_cancels excludes execution legs
+      (C inside a T/F message group) and replace legs (C inside an A+C
+      group); trades counts tape prints (T) only — F is a separate
+      fills metric so executions are never double-counted.
+    columns:
+      - name: symbol
+        description: Ticker (from silver identity partition).
+        data_tests: [not_null]
+      - name: event_hour
+        description: UTC hour (0–23) of ts_event. Hours with no messages have no row.
+      - name: messages
+        description: All MBO messages in the hour (any action).
+      - name: adds
+        description: Add-order messages (A).
+      - name: cancels
+        description: >
+          All cancel messages (C), unfiltered — includes mechanical
+          execution legs and replace legs.
+      - name: standalone_cancels
+        description: >
+          Trader-initiated cancels: C whose message group contains no T/F
+          (execution) and no A (replace leg). The layering/spoofing-grade
+          cancellation count.
+        data_tests: [not_null]
+      - name: trades
+        description: >
+          Tape prints (T) — includes crosses (side N). F rows are NOT
+          counted here: same executions, would double-count.
+      - name: fills
+        description: >
+          Resting-order executions (F), independent of tape printability
+          (non-printable executions emit F+C without T).
+      - name: trade_volume
+        description: Sum of size over T rows (shares). 0 for hours with no trades.
+      - name: vwap
+        description: >
+          Volume-weighted average price over T rows, DOUBLE. NULL for hours
+          with no trades.
+      - name: cancel_to_add_ratio
+        description: cancels / adds (unfiltered counts); NULL when adds = 0.
+      - name: messages_per_minute
+        description: messages / 60 — mean message rate across the hour.
+      - name: ts_event_day
+        description: Trading day derived from ts_event (identity partition).
+        data_tests: [not_null]
