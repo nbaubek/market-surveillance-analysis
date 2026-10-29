@@ -4,9 +4,19 @@ models:
   - name: itch_mbo_cleaned
     description: >
       Deduplicated MBO message stream. Same grain as bronze (one row per
-      message event); partitions are rebuilt atomically day-by-day via
-      insert_overwrite, making reruns of any trading day safe.
+      message event). Incremental merge on message_key: by default every run
+      re-processes a 5-day rolling window; explicit start_date/end_date vars
+      backfill any range idempotently (matched messages update in place, new
+      ones insert).
     columns:
+      - name: message_key
+        description: >
+          Null-safe md5 surrogate of the full message identity (symbol,
+          ts_event, sequence, order_id, action, price, size). Athena MERGE
+          joins on plain '=' and NULL never equals NULL, so system rows
+          (NULL price/order_id) need the encoded form for re-merges to stay
+          idempotent. This test also enforces the key is always populated.
+        data_tests: [not_null]
       - name: symbol
         description: Raw Databento symbol (identity partition).
         data_tests: [not_null]
