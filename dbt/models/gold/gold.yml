@@ -40,14 +40,106 @@ models:
           (non-printable executions emit F+C without T).
       - name: trade_volume
         description: Sum of size over T rows (shares). 0 for hours with no trades.
+      - name: notional_volume
+        description: >
+          Sum of price * size over T rows, DOUBLE (dollar turnover). The
+          cross-symbol comparable volume measure.
       - name: vwap
         description: >
           Volume-weighted average price over T rows, DOUBLE. NULL for hours
           with no trades.
+      - name: open
+        description: >
+          First T price in the hour (tape-based; includes crosses). NULL for
+          hours with no trades.
+      - name: high
+        description: Highest T price in the hour. NULL for hours with no trades.
+      - name: low
+        description: Lowest T price in the hour. NULL for hours with no trades.
+      - name: close
+        description: >
+          Last T price in the hour (tape-based; includes crosses). NULL for
+          hours with no trades.
+      - name: avg_trade_size
+        description: trade_volume / trades. NULL for hours with no trades.
+      - name: range_bps
+        description: >
+          (high − low) / vwap * 10000 — hourly trading range in basis points
+          of VWAP. NULL for hours with no trades.
+      - name: vwap_premium
+        description: >
+          close / vwap − 1 — where the hour's last price ended relative to
+          its volume-weighted average. NULL for hours with no trades.
       - name: cancel_to_add_ratio
         description: cancels / adds (unfiltered counts); NULL when adds = 0.
       - name: messages_per_minute
         description: messages / 60 — mean message rate across the hour.
       - name: ts_event_day
         description: Trading day derived from ts_event (identity partition).
+        data_tests: [not_null]
+
+  - name: daily_summary
+    description: >
+      One row per (symbol, ts_event_day): the dashboard landing table,
+      aggregating hourly_liquidity_metrics. Day open/close come from the
+      hourly values (earliest/latest hour with trades), day VWAP is
+      recomputed from summed notional/shares. Metric semantics inherit the
+      verified message rules in gold-layer-plan.md unchanged.
+    columns:
+      - name: symbol
+        description: Ticker.
+        data_tests: [not_null]
+      - name: active_hours
+        description: >
+          Number of UTC hours with at least one message (max 24; overnight
+          silence produces no hours).
+      - name: peak_message_hour
+        description: UTC hour with the most messages (ties resolve arbitrarily).
+      - name: messages
+        description: All MBO messages in the day.
+      - name: adds
+        description: Add-order messages (A).
+      - name: cancels
+        description: All cancel messages (C), unfiltered (execution + replace legs included).
+      - name: standalone_cancels
+        description: >
+          Trader-initiated cancels (no execution leg, no replace leg in the
+          message group). The layering/spoofing-grade cancellation count.
+        data_tests: [not_null]
+      - name: trades
+        description: Tape prints (T) in the day; F excluded (would double-count).
+      - name: fills
+        description: Resting-order executions (F).
+      - name: trade_volume
+        description: Sum of size over T rows (shares).
+      - name: notional_volume
+        description: Sum of price * size over T rows, DOUBLE (dollar turnover).
+      - name: vwap
+        description: >
+          Day volume-weighted average price over T rows, recomputed from
+          summed notional/shares (not an average of hourly VWAPs). NULL for
+          days with no trades.
+      - name: open
+        description: Day's first T price (open of earliest hour with trades). NULL if no trades.
+      - name: high
+        description: Day's highest T price. NULL if no trades.
+      - name: low
+        description: Day's lowest T price. NULL if no trades.
+      - name: close
+        description: Day's last T price (close of latest hour with trades, i.e. after the closing cross). NULL if no trades.
+      - name: avg_trade_size
+        description: trade_volume / trades. NULL for days with no trades.
+      - name: range_bps
+        description: (high − low) / vwap * 10000 — day range in bps of VWAP. NULL if no trades.
+      - name: vwap_premium
+        description: close / vwap − 1. NULL if no trades.
+      - name: cancel_to_add_ratio
+        description: Day cancels / adds (unfiltered counts); NULL when adds = 0.
+      - name: cancel_to_trade_ratio
+        description: >
+          Day standalone_cancels / trades — classic layering/spoofing
+          indicator; MUST use standalone cancels (raw C counts are inflated
+          by execution and replace legs, see Rule 1/3 in gold-layer-plan.md).
+      - name: ts_event_day
+        description: Trading day (identity partition).
         data_tests: [not_null]

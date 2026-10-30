@@ -13,7 +13,7 @@ streaming ingestion → Apache Iceberg medallion (bronze/silver/gold) on AWS
 
 ## dbt: silver layer
 
-Two models today:
+Three models today:
 
 - **`itch_mbo_cleaned`** (`dbt/models/silver/`) — an Apache Iceberg table in
   `market_surveillance_silver`, built incrementally from the bronze source.
@@ -21,9 +21,14 @@ Two models today:
   table in `market_surveillance_gold`, rebuilt fully each run (gold volume
   is tiny): hourly liquidity metrics per (symbol, day, UTC hour) — messages,
   adds, standalone cancels (surveillance-grade: excludes mechanical
-  execution/replace legs), tape trades, fills, volume, VWAP, cancel-to-add
-  ratio. Metric semantics follow the verified message rules in
-  `gold-layer-plan.md`.
+  execution/replace legs), tape trades, fills, volume, notional turnover,
+  tape OHLC, VWAP, avg trade size, range (bps), and cancel ratios. Metric
+  semantics follow the verified message rules in `gold-layer-plan.md`.
+- **`daily_summary`** (`dbt/models/gold/`) — an Apache Iceberg table in
+  `market_surveillance_gold`, rebuilt fully each run: one row per
+  (symbol, day) — the dashboard landing table. Day OHLC (first/last tape
+  print), recomputed day VWAP, totals, active hours, peak message hour, and
+  cancel ratios including the Phase-2 `cancel_to_trade_ratio`.
 
 **What it does.** Takes the raw MBO stream at the same message-level grain and:
 
@@ -50,8 +55,9 @@ From `dbt/` (profile: `dbt/profiles.yml`, Athena target, `s3_data_dir` pinned
 under `silver/` to stay outside the 30-day lifecycle prefix):
 
 ```
-dbt run  --select itch_mbo_cleaned   # build
-dbt test --select itch_mbo_cleaned   # enforce
+dbt run  --select itch_mbo_cleaned                          # silver: build
+dbt test --select itch_mbo_cleaned                          # silver: enforce
+dbt run  --select hourly_liquidity_metrics daily_summary    # gold: build
 ```
 
 With no vars, the model runs in **catch-up mode**: every run re-processes a

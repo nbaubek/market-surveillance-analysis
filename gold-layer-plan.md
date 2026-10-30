@@ -59,14 +59,16 @@ sessions (GTC orders). Databento injects a synthetic start-of-day snapshot
 precisely to seed state; decide later whether replay consumes bronze
 (R + snapshot state) or silver accepts the open distortion.
 
-## Phase 1 — `hourly_liquidity_metrics` (built, verified)
+## Phase 1 — `hourly_liquidity_metrics` + `daily_summary` (built, verified)
 
-Status: model lives at `dbt/models/gold/hourly_liquidity_metrics.sql`; sums
-tie out exactly to silver (messages/trades/adds/cancels/fills/
-standalone_cancels, 4 days). Materialized as Iceberg `table` (full CTAS
-rebuild per run — see open question 4) partitioned by `identity(ts_event_day)`,
-under `s3://trading-surveillance-data/gold/`. Hours with zero messages
-produce no row (overnight silence); BI tools cross-fill.
+Status: `dbt/models/gold/hourly_liquidity_metrics.sql` and
+`dbt/models/gold/daily_summary.sql`; hourly sums tie out exactly to silver
+(messages/trades/adds/cancels/fills/standalone_cancels, 4 days). Both are
+Iceberg `table`s (full CTAS rebuild per run — see open question 4)
+partitioned by `identity(ts_event_day)`, under
+`s3://trading-surveillance-data/gold/`. Hours with zero messages produce no
+row (overnight silence); hours with messages but no trades have NULL price
+stats; BI tools cross-fill.
 
 Per (symbol, ts_event_day, hour):
 
@@ -79,20 +81,34 @@ Per (symbol, ts_event_day, hour):
 | `trades` | count where action = 'T' — tape prints only; F excluded (same executions as T, would double-count) |
 | `fills` | count where action = 'F' — resting-order executions, independent of tape printability |
 | `trade_volume` | sum(size) where action = 'T' |
-| `vwap` | sum(price * size) / sum(size) where action = 'T' |
-| `cancel_to_add_ratio` | cancels / nullif(adds, 0) |
+| `notional_volume` | sum(price * size) where action = 'T', DOUBLE (dollar turnover; cross-symbol comparable) |
+| `vwap` | notional / shares over T, DOUBLE; NULL when no trades |
+| `open` / `close` | first / last T price in the hour (`min_by`/`max_by(price, ts_event)`); tape-based, includes crosses (side=N) |
+| `high` / `low` | max / min T price in the hour |
+| `avg_trade_size` | trade_volume / trades |
+| `range_bps` | (high − low) / vwap * 10000 — hourly volatility proxy |
+| `vwap_premium` | close / vwap − 1 |
+| `cancel_to_add_ratio` | cancels / nullif(adds, 0) — cast to DOUBLE first (Trino `/` on two BIGINTs truncates) |
 | `messages_per_minute` | messages / 60 |
 
-Notes: VWAP on DECIMAL(18,9) — decide cast-to-double vs decimal division.
-T-only tape metrics miss non-printable executions by definition (not on the
-tape) but include crosses (side=N). Include RTH/after-hours flag? (session
-hour boundaries, ET vs UTC) — open question, UTC hours as default.
+**`daily_summary`** — one row per (symbol, ts_event_day), aggregated from
+the hourly model: summed counts/volumes, day VWAP recomputed from summed
+notional/shares (not an average of hourly VWAPs), day OHLC from the
+earliest/latest hour with trades (day close captures the closing cross),
+`active_hours`, `peak_message_hour` (`max_by(event_hour, messages)`), and
+`cancel_to_trade_ratio` (Phase 2 item: standalone_cancels / trades, the
+layering/spoofing screen). The dashboard landing table.
+
+Sanity anchors (MSFT, 2019-07-30 → 08-02): day VWAP 140.47 → 136.52 with
+the 08-01 post-earnings drop (open 137.00, range 298 bps vs 108 bps on
+07-30); closing-cross hour 20 has avg_trade_size ~10,900 vs ~160 day mean.
+
 
 ## Phase 2 — surveillance-flavored metrics
 
 | Metric | Definition | Grain question |
 |---|---|---|
-| `cancel_to_trade_ratio` | standalone_cancels / nullif(trades, 0) — classic layering/spoofing indicator; MUST use standalone cancels, raw C counts are inflated by execution legs (Rule 1) | fits hourly |
+| `cancel_to_trade_ratio` | standalone_cancels / nullif(trades, 0) — classic layering/spoofing indicator; MUST use standalone cancels, raw C counts are inflated by execution legs (Rule 1) | fits hourly — built at day grain in `daily_summary` |
 | `large_order_share` | share of adds with size > p95(size) per symbol-day; consider excluding replace-A legs (Rule 3) so one modify doesn't count as a fresh large order | needs daily percentile first, then hourly |
 | `message_rate_burst` | max per-minute (or per-second) message count vs daily mean | needs a minute-level intermediate, not hourly |
 
