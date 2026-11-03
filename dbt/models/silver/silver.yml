@@ -47,3 +47,52 @@ models:
       - name: ts_event_day
         description: Trading day derived from ts_event (identity partition).
         data_tests: [not_null]
+
+  - name: message_flags
+    description: >
+      Silver enrichment, one row per itch_mbo_cleaned message (same
+      message_key): message-group classification per the verified Rules 1+3
+      in gold-layer-plan.md. An annotation table, not a copy — consumers
+      join on message_key and take only the flag columns. Incremental merge
+      with the same dual-mode window as itch_mbo_cleaned (5-day catch-up
+      default; start_date/end_date vars for backfill). This is the single
+      source of truth for execution/replace/standalone-cancel
+      classification: never re-derive the window logic in a consumer.
+    columns:
+      - name: message_key
+        description: >
+          Join key back to itch_mbo_cleaned.message_key (the same null-safe
+          md5 surrogate). One row per message.
+        data_tests: [not_null]
+      - name: action
+        description: Denormalized from silver for standalone-cancel context.
+      - name: channel_id
+        description: >
+          Denormalized message-group member (part of the group identity
+          with ts_event_day and sequence).
+      - name: sequence
+        description: >
+          Denormalized message-group member; resets each trading day
+          (open question 7 in gold-layer-plan.md).
+      - name: in_execution_group
+        description: >
+          TRUE when this message's group (ts_event_day, channel_id,
+          sequence) contains a T or F row — i.e. the row belongs to an
+          execution message (T+F+C triple, or F+C when non-printable).
+      - name: in_replace_group
+        description: >
+          TRUE when this message's group contains an A row — i.e. the C is
+          the modify leg of an order replace (C old + A new).
+      - name: is_standalone_cancel
+        description: >
+          TRUE for a trader-initiated cancel: action = C, group has no
+          execution leg and no replace leg. The churn /
+          layering-spoofing-grade cancellation count; mechanical legs are
+          excluded by construction.
+        data_tests: [not_null]
+      - name: symbol
+        description: Ticker (identity partition).
+        data_tests: [not_null]
+      - name: ts_event_day
+        description: Trading day derived from ts_event (identity partition).
+        data_tests: [not_null]

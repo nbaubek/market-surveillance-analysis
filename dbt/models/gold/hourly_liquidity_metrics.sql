@@ -13,13 +13,10 @@
 -- hour) — see gold-layer-plan.md for the verified message-semantics rules
 -- these definitions follow.
 --
--- Message-group flags (Rules 1 and 3): all rows of one TotalView message
--- share (ts_event_day, channel_id, sequence). The window functions mark
--- whether a row's group contains an execution leg (T/F) or an add leg (A),
--- so standalone_cancels can exclude execution cancels and replace legs.
--- Computed in one pass with window functions — no self-join. The window
--- partition includes ts_event_day because sequence resets each trading day
--- (verified; see gold-layer-plan.md open question 7).
+-- Message-group flags (Rules 1 and 3) come from the message_flags model
+-- (silver enrichment, joined on message_key) — the single source of truth
+-- for the execution/replace/standalone-cancel classification. Do NOT
+-- re-derive the window logic here; change message_flags instead.
 --
 -- OHLC (open/high/low/close) is tape-based: prices of T rows only, which
 -- include crosses (side=N) like the rest of the tape metrics. open/close
@@ -43,26 +40,17 @@
 with flagged as (
 
     select
-        symbol,
-        cast(date_trunc('day', ts_event) as date) as ts_event_day,
-        hour(ts_event) as event_hour,
-        action,
-        size,
-        price,
-        ts_event,
-        max(case when action in ('T', 'F') then 1 else 0 end) over (
-            partition by symbol,
-                         cast(date_trunc('day', ts_event) as date),
-                         channel_id,
-                         sequence
-        ) as in_execution_group,
-        max(case when action = 'A' then 1 else 0 end) over (
-            partition by symbol,
-                         cast(date_trunc('day', ts_event) as date),
-                         channel_id,
-                         sequence
-        ) as in_replace_group
-    from {{ ref('itch_mbo_cleaned') }}
+        m.symbol,
+        cast(date_trunc('day', m.ts_event) as date) as ts_event_day,
+        hour(m.ts_event) as event_hour,
+        m.action,
+        m.size,
+        m.price,
+        m.ts_event,
+        f.is_standalone_cancel
+    from {{ ref('itch_mbo_cleaned') }} m
+    join {{ ref('message_flags') }} f
+        on m.message_key = f.message_key
 
 ),
 
@@ -74,9 +62,7 @@ hourly as (
         count(*) as messages,
         count_if(action = 'A') as adds,
         count_if(action = 'C') as cancels,
-        count_if(action = 'C'
-                 and in_execution_group = 0
-                 and in_replace_group = 0) as standalone_cancels,
+        count_if(is_standalone_cancel) as standalone_cancels,
         count_if(action = 'T') as trades,
         count_if(action = 'F') as fills,
         sum(if(action = 'T', size, 0)) as trade_volume,

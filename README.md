@@ -13,22 +13,36 @@ streaming ingestion → Apache Iceberg medallion (bronze/silver/gold) on AWS
 
 ## dbt: silver layer
 
-Three models today:
+Six models today:
 
-- **`itch_mbo_cleaned`** (`dbt/models/silver/`) — an Apache Iceberg table in
-  `market_surveillance_silver`, built incrementally from the bronze source.
-- **`hourly_liquidity_metrics`** (`dbt/models/gold/`) — an Apache Iceberg
-  table in `market_surveillance_gold`, rebuilt fully each run (gold volume
-  is tiny): hourly liquidity metrics per (symbol, day, UTC hour) — messages,
+**Silver** (`dbt/models/silver/`, Iceberg tables in `market_surveillance_silver`):
+
+- **`itch_mbo_cleaned`** — built incrementally (merge) from the bronze source.
+- **`message_flags`** — silver enrichment: message-group classification, one
+  row per message (join key `message_key`). Materializes the verified
+  execution/replace/standalone-cancel flags so the window functions run once
+  per window instead of once per consumer; incremental merge with the same
+  dual-mode window as `itch_mbo_cleaned`. Single source of truth for cancel
+  classification — consumers join, never re-derive.
+
+**Gold** (`dbt/models/gold/`, Iceberg tables in `market_surveillance_gold`,
+rebuilt fully each run — aggregate volume is tiny):
+
+- **`hourly_liquidity_metrics`** — per (symbol, day, UTC hour): messages,
   adds, standalone cancels (surveillance-grade: excludes mechanical
-  execution/replace legs), tape trades, fills, volume, notional turnover,
-  tape OHLC, VWAP, avg trade size, range (bps), and cancel ratios. Metric
-  semantics follow the verified message rules in `gold-layer-plan.md`.
-- **`daily_summary`** (`dbt/models/gold/`) — an Apache Iceberg table in
-  `market_surveillance_gold`, rebuilt fully each run: one row per
-  (symbol, day) — the dashboard landing table. Day OHLC (first/last tape
-  print), recomputed day VWAP, totals, active hours, peak message hour, and
-  cancel ratios including the Phase-2 `cancel_to_trade_ratio`.
+  execution/replace legs via `message_flags`), tape trades, fills, volume,
+  notional turnover, tape OHLC, VWAP, avg trade size, range (bps), and
+  cancel ratios. Metric semantics follow the verified message rules in
+  `gold-layer-plan.md`.
+- **`minute_liquidity_metrics`** — minute-grain mirror of the hourly model;
+  answers time-weighted questions (burst detection, TWAP, realized
+  volatility, minute bars for charts).
+- **`volume_profile`** — volume by 10-cent price bucket per (symbol, day)
+  with `volume_share`; the horizontal volume-at-price distribution.
+- **`daily_summary`** — one row per (symbol, day): the dashboard landing
+  table. Day OHLC (first/last tape print), recomputed day VWAP, totals,
+  active hours, peak message hour, cancel ratios including the Phase-2
+  `cancel_to_trade_ratio`, and minute-derived burst/TWAP/realized-vol.
 
 **What it does.** Takes the raw MBO stream at the same message-level grain and:
 
@@ -55,9 +69,10 @@ From `dbt/` (profile: `dbt/profiles.yml`, Athena target, `s3_data_dir` pinned
 under `silver/` to stay outside the 30-day lifecycle prefix):
 
 ```
-dbt run  --select itch_mbo_cleaned                          # silver: build
-dbt test --select itch_mbo_cleaned                          # silver: enforce
-dbt run  --select hourly_liquidity_metrics daily_summary    # gold: build
+dbt run  --select itch_mbo_cleaned message_flags    # silver: build (both share
+                                                    # the catch-up/backfill window)
+dbt test --select itch_mbo_cleaned message_flags    # silver: enforce
+dbt run                                            # gold: build all (full rebuild)
 ```
 
 With no vars, the model runs in **catch-up mode**: every run re-processes a

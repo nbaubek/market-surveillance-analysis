@@ -4,10 +4,14 @@ Aggregates for dashboards and surveillance analytics, built by dbt from
 `itch_mbo_cleaned` (silver). Output feeds a free BI tool (Tableau Public /
 Power BI Desktop) via Athena, per CLAUDE.md.
 
-Grain of the primary table: **one row per (symbol, trading day, hour)**.
-Partitioning: `identity(ts_event_day)`. Data volume is tiny (hundreds of rows
-per symbol-month) — full-refresh materialization is acceptable at any scale
-this project will reach; revisit only if it ever hurts.
+Grain of the primary table: **one row per (symbol, trading day, hour)**,
+with supporting grains at minute (liquidity/bars), price bucket (volume
+profile), and day (dashboard landing). Partitioning: `identity(ts_event_day)`
+on gold tables. Aggregate data volume is tiny — full-refresh materialization
+is acceptable at any scale this project will reach; revisit only if it ever
+hurts. The one exception is `message_flags` (silver enrichment, one row per
+message): it is incremental-merge like silver, since its volume is silver's
+volume.
 
 ## Message semantics rules (from dataset-info.md)
 
@@ -103,18 +107,58 @@ Sanity anchors (MSFT, 2019-07-30 → 08-02): day VWAP 140.47 → 136.52 with
 the 08-01 post-earnings drop (open 137.00, range 298 bps vs 108 bps on
 07-30); closing-cross hour 20 has avg_trade_size ~10,900 vs ~160 day mean.
 
+## Tier 2 — `message_flags`, minute metrics, volume profile (built, verified)
+
+**`message_flags`** (`dbt/models/silver/message_flags.sql`) — the
+materialized message-group classification (open question 8, resolved).
+One row per silver message, keyed by `message_key`: an annotation table,
+NOT a copy of silver — consumers join on `message_key` and take only the
+flags, keeping it lean for the 2025 scale-up. Incremental merge mirroring
+`itch_mbo_cleaned` (same dual-mode window; day-aligned edges are safe
+because the group key contains `ts_event_day`). Columns:
+`in_execution_group` (group has a T/F — Rule 1), `in_replace_group`
+(group has an A — Rule 3), `is_standalone_cancel` (C with neither: the
+trader-initiated / churn count). **Single source of truth — never
+re-derive the window logic in a consumer** (`hourly_liquidity_metrics`
+was refactored to join it; sums unchanged). Verified: 9,098,433 rows =
+silver rows, all keys distinct, standalone = 3,643,556 (the independently
+verified count).
+
+**`minute_liquidity_metrics`** (`dbt/models/gold/`) — minute-grain mirror
+of the hourly model (same semantics, flags via the join): messages, adds,
+cancels, standalone_cancels, trades, volume, notional, VWAP, OHLC per
+(symbol, day, UTC minute). ~3,310 rows for 4 MSFT days. Exists because
+hourly buckets cannot answer time-weighted questions: burst detection,
+TWAP, realized volatility, and minute bars for charts.
+
+**`volume_profile`** (`dbt/models/gold/`) — volume by 10-cent price bucket
+per (symbol, day) over T rows: trades, volume, notional, `volume_share`
+(share of symbol-day volume; sums to 1 per day). Fixed bins are
+symbol-specific — cross-symbol comparisons use `volume_share`, and bin
+width gets revisited when small caps land (open question 1 adjacent).
+
+**`daily_summary` additions** (derived from the minute model):
+`peak_minute_messages` (max per-minute message count), `burst_ratio`
+(peak / mean over active minutes — the `message_rate_burst` screen),
+`twap` (mean of traded-minute closes; silent minutes skipped, not
+zero-filled), `realized_vol_bps` (sqrt of summed squared close-to-close
+minute log returns over consecutive traded minutes; sparse-minute
+approximation). Sanity anchors: peak minute = the 13:30 UTC (9:30 ET)
+opening minute exactly (21,295 msgs on 07-30); realized vol 100–200 bps
+ranking matches the range ranking (earnings day 07-31 highest); TWAP >
+VWAP on the two down days (equal time-weighting vs volume-weighting).
+
 
 ## Phase 2 — surveillance-flavored metrics
 
-| Metric | Definition | Grain question |
+| Metric | Definition | Status |
 |---|---|---|
-| `cancel_to_trade_ratio` | standalone_cancels / nullif(trades, 0) — classic layering/spoofing indicator; MUST use standalone cancels, raw C counts are inflated by execution legs (Rule 1) | fits hourly — built at day grain in `daily_summary` |
-| `large_order_share` | share of adds with size > p95(size) per symbol-day; consider excluding replace-A legs (Rule 3) so one modify doesn't count as a fresh large order | needs daily percentile first, then hourly |
-| `message_rate_burst` | max per-minute (or per-second) message count vs daily mean | needs a minute-level intermediate, not hourly |
+| `cancel_to_trade_ratio` | standalone_cancels / nullif(trades, 0) — classic layering/spoofing indicator; MUST use standalone cancels, raw C counts are inflated by execution legs (Rule 1) | built (day grain, `daily_summary`) |
+| `message_rate_burst` | max per-minute message count vs daily mean | built (`peak_minute_messages` + `burst_ratio` in `daily_summary`, from the minute model) |
+| `large_order_share` | share of adds with size > p95(size) per symbol-day; exclude replace-A legs (Rule 3) so one modify doesn't count as a fresh large order | remaining — cheap now: join `itch_mbo_cleaned` to `message_flags` on `message_key`, filter adds with `not in_replace_group`, daily percentile then hourly share |
 
-Phase 2 likely needs message-group flags (is_execution / is_replace /
-is_standalone_cancel). Decide whether they live in one intermediate model
-(e.g. `message_groups`) or as CTEs repeated inside each consumer.
+Message-group flags decision resolved: materialized as `message_flags`
+(see Tier 2 section) — consumers join, never re-derive.
 
 ## Phase 3 — top-of-book reconstruction (advanced, deliberate decision)
 
@@ -155,5 +199,11 @@ prices (Roll estimator or high-low), documented as approximate.
    on a single channel (channel_id = 0). The group key
    (ts_event_day, channel_id, sequence) is valid; re-check channel spread
    when more symbols are added.
-8. Should message-group flags (execution / replace / standalone-cancel) be
-   one materialized model or repeated CTEs in consumers?
+8. RESOLVED: message-group flags are materialized as `message_flags`
+   (`dbt/models/silver/message_flags.sql`) — one row per silver message,
+   joined by consumers on `message_key`. Incremental merge with the same
+   dual-mode window as `itch_mbo_cleaned` (flags are group-local and the
+   group key contains the day, so day-aligned windows are self-contained).
+   Built ahead of the 2025 scale-up because the minute model and the
+   upcoming `large_order_share` consume it; window functions run once per
+   window instead of once per consumer per rebuild. See the Tier 2 section.
