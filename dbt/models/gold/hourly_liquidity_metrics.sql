@@ -44,6 +44,7 @@ with flagged as (
         cast(date_trunc('day', m.ts_event) as date) as ts_event_day,
         hour(m.ts_event) as event_hour,
         m.action,
+        m.side,
         m.size,
         m.price,
         m.ts_event,
@@ -66,6 +67,13 @@ hourly as (
         count_if(action = 'T') as trades,
         count_if(action = 'F') as fills,
         sum(if(action = 'T', size, 0)) as trade_volume,
+        -- Aggressor-side split: T rows carry the AGGRESSOR's side (verified;
+        -- F/C rows carry the resting side). side='B' = buyer-initiated,
+        -- 'A' = seller-initiated, 'N' = crosses. Identity:
+        -- taker_buy + taker_sell + cross_volume = trade_volume.
+        sum(if(action = 'T' and side = 'B', size, 0)) as taker_buy_volume,
+        sum(if(action = 'T' and side = 'A', size, 0)) as taker_sell_volume,
+        sum(if(action = 'T' and side = 'N', size, 0)) as cross_volume,
         sum(if(action = 'T', price * size, 0)) as notional_turnover,
         cast(sum(if(action = 'T', price * size, 0)) as double)
             / nullif(cast(sum(if(action = 'T', size, 0)) as double), 0) as vwap,
@@ -91,6 +99,15 @@ select
     trades,
     fills,
     trade_volume,
+    taker_buy_volume,
+    taker_sell_volume,
+    cross_volume,
+    -- Order-flow imbalance: directional aggression balance in [-1, 1].
+    -- Crosses (side=N) are excluded from the denominator by construction.
+    -- cast to DOUBLE before dividing (Trino BIGINT / BIGINT truncates).
+    cast(taker_buy_volume - taker_sell_volume as double)
+        / nullif(cast(taker_buy_volume + taker_sell_volume as double), 0)
+        as order_flow_imbalance,
     cast(notional_turnover as double) as notional_volume,
     vwap,
     open,

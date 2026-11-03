@@ -33,6 +33,7 @@ with flagged as (
         cast(date_trunc('day', m.ts_event) as date) as ts_event_day,
         hour(m.ts_event) * 60 + minute(m.ts_event) as event_minute,
         m.action,
+        m.side,
         m.size,
         m.price,
         m.ts_event,
@@ -54,6 +55,10 @@ minute as (
         count_if(is_standalone_cancel) as standalone_cancels,
         count_if(action = 'T') as trades,
         sum(if(action = 'T', size, 0)) as trade_volume,
+        -- Aggressor-side split; identity taker_buy + taker_sell + cross = volume.
+        sum(if(action = 'T' and side = 'B', size, 0)) as taker_buy_volume,
+        sum(if(action = 'T' and side = 'A', size, 0)) as taker_sell_volume,
+        sum(if(action = 'T' and side = 'N', size, 0)) as cross_volume,
         sum(if(action = 'T', price * size, 0)) as notional_turnover,
         cast(sum(if(action = 'T', price * size, 0)) as double)
             / nullif(cast(sum(if(action = 'T', size, 0)) as double), 0) as vwap,
@@ -78,6 +83,12 @@ select
     standalone_cancels,
     trades,
     trade_volume,
+    taker_buy_volume,
+    taker_sell_volume,
+    cross_volume,
+    cast(taker_buy_volume - taker_sell_volume as double)
+        / nullif(cast(taker_buy_volume + taker_sell_volume as double), 0)
+        as order_flow_imbalance,
     cast(notional_turnover as double) as notional_volume,
     vwap,
     open,

@@ -40,6 +40,23 @@ models:
           (non-printable executions emit F+C without T).
       - name: trade_volume
         description: Sum of size over T rows (shares). 0 for hours with no trades.
+      - name: taker_buy_volume
+        description: >
+          Buyer-initiated volume: T rows with side='B' (T carries the
+          aggressor's side). With taker_sell_volume and cross_volume sums
+          to trade_volume.
+      - name: taker_sell_volume
+        description: >
+          Seller-initiated volume (T rows with side='A').
+      - name: cross_volume
+        description: >
+          Volume of crosses / side-less prints (T rows with side='N').
+          Excluded from order_flow_imbalance by construction.
+      - name: order_flow_imbalance
+        description: >
+          (taker_buy_volume − taker_sell_volume) / (their sum), in
+          [−1, 1] — directional aggression balance. NULL for hours with no
+          directional trades.
       - name: notional_volume
         description: >
           Sum of price * size over T rows, DOUBLE (dollar turnover). The
@@ -110,6 +127,18 @@ models:
         description: Tape prints (T); F excluded (would double-count).
       - name: trade_volume
         description: Sum of size over T rows (shares).
+      - name: taker_buy_volume
+        description: >
+          Buyer-initiated volume (T rows, side='B'); with taker_sell_volume
+          and cross_volume sums to trade_volume.
+      - name: taker_sell_volume
+        description: Seller-initiated volume (T rows, side='A').
+      - name: cross_volume
+        description: Cross / side-less print volume (T rows, side='N').
+      - name: order_flow_imbalance
+        description: >
+          (buy − sell) / (buy + sell) taker volume in [−1, 1]. NULL for
+          minutes with no directional trades.
       - name: notional_volume
         description: Sum of price * size over T rows, DOUBLE (dollar turnover).
       - name: vwap
@@ -221,6 +250,29 @@ models:
           Day standalone_cancels / trades — classic layering/spoofing
           indicator; MUST use standalone cancels (raw C counts are inflated
           by execution and replace legs, see Rule 1/3 in gold-layer-plan.md).
+      - name: taker_buy_volume
+        description: Day sum of buyer-initiated volume (T rows, side='B').
+      - name: taker_sell_volume
+        description: Day sum of seller-initiated volume (T rows, side='A').
+      - name: cross_volume
+        description: Day sum of cross / side-less print volume (T rows, side='N').
+      - name: order_flow_imbalance
+        description: >
+          Day (buy − sell) / (buy + sell) taker volume in [−1, 1] — net
+          directional aggression. NULL for days with no directional trades.
+      - name: large_order_threshold
+        description: >
+          Symbol-day p95 of add size (approx_percentile), computed over
+          genuine new adds only — replace-A legs excluded via the group's
+          cancel flag (an A whose message group also contains a C is the
+          new-order leg of a replace pair, Rule 3).
+      - name: large_order_count
+        description: Adds strictly above large_order_threshold.
+      - name: large_order_share
+        description: >
+          large_order_count / eligible (non-replace) adds — ~5% or less by
+          construction; movement upward marks concentration of large
+          liquidity placements.
       - name: peak_minute_messages
         description: >
           Max per-minute message count over active minutes (minutes with no

@@ -31,18 +31,20 @@ rebuilt fully each run — aggregate volume is tiny):
 - **`hourly_liquidity_metrics`** — per (symbol, day, UTC hour): messages,
   adds, standalone cancels (surveillance-grade: excludes mechanical
   execution/replace legs via `message_flags`), tape trades, fills, volume,
-  notional turnover, tape OHLC, VWAP, avg trade size, range (bps), and
-  cancel ratios. Metric semantics follow the verified message rules in
-  `gold-layer-plan.md`.
-- **`minute_liquidity_metrics`** — minute-grain mirror of the hourly model;
-  answers time-weighted questions (burst detection, TWAP, realized
-  volatility, minute bars for charts).
+  aggressor-side split and order-flow imbalance, notional turnover, tape
+  OHLC, VWAP, avg trade size, range (bps), and cancel ratios. Metric
+  semantics follow the verified message rules in `gold-layer-plan.md`.
+- **`minute_liquidity_metrics`** — minute-grain mirror of the hourly model
+  (incl. order-flow imbalance); answers time-weighted questions (burst
+  detection, TWAP, realized volatility, minute bars for charts).
 - **`volume_profile`** — volume by 10-cent price bucket per (symbol, day)
   with `volume_share`; the horizontal volume-at-price distribution.
 - **`daily_summary`** — one row per (symbol, day): the dashboard landing
   table. Day OHLC (first/last tape print), recomputed day VWAP, totals,
   active hours, peak message hour, cancel ratios including the Phase-2
-  `cancel_to_trade_ratio`, and minute-derived burst/TWAP/realized-vol.
+  `cancel_to_trade_ratio`, order-flow imbalance, large-order screen
+  (p95 threshold / count / share over genuine new adds), and minute-derived
+  burst/TWAP/realized-vol.
 
 **What it does.** Takes the raw MBO stream at the same message-level grain and:
 

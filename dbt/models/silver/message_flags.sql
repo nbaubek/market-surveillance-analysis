@@ -31,6 +31,12 @@
 -- Flags are BOOLEAN; is_standalone_cancel is the pre-computed conjunction
 -- so consumers can use it directly (trader-initiated cancel: no execution
 -- leg, no replace leg — the churn / layering-spoofing-grade count).
+--
+-- Asymmetry to keep in mind when filtering: in_replace_group ("group has
+-- an A") is TRUE for every A row — its own leg makes it so; it classifies
+-- C rows. To classify A rows (replace-A leg vs genuine new add), use
+-- in_cancel_group ("group has a C"): an A in a group that also contains a
+-- C is the new-order leg of a replace pair (Rule 3), not fresh liquidity.
 
 {% set start_var = var('start_date', none) %}
 {% set end_var = var('end_date', none) %}
@@ -61,7 +67,13 @@ with windowed as (
                          cast(date_trunc('day', ts_event) as date),
                          channel_id,
                          sequence
-        ) as _replace_leg
+        ) as _replace_leg,
+        max(case when action = 'C' then 1 else 0 end) over (
+            partition by symbol,
+                         cast(date_trunc('day', ts_event) as date),
+                         channel_id,
+                         sequence
+        ) as _cancel_leg
     from {{ ref('itch_mbo_cleaned') }}
     {% if is_incremental() %}
     -- Filter on raw ts_event (not the derived day) so partition pruning
@@ -85,6 +97,7 @@ select
     sequence,
     _execution_leg = 1 as in_execution_group,
     _replace_leg = 1 as in_replace_group,
+    _cancel_leg = 1 as in_cancel_group,
     action = 'C' and _execution_leg = 0 and _replace_leg = 0
         as is_standalone_cancel,
     symbol,

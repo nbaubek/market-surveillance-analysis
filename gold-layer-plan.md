@@ -117,8 +117,11 @@ flags, keeping it lean for the 2025 scale-up. Incremental merge mirroring
 `itch_mbo_cleaned` (same dual-mode window; day-aligned edges are safe
 because the group key contains `ts_event_day`). Columns:
 `in_execution_group` (group has a T/F — Rule 1), `in_replace_group`
-(group has an A — Rule 3), `is_standalone_cancel` (C with neither: the
-trader-initiated / churn count). **Single source of truth — never
+(group has an A — Rule 3), `in_cancel_group` (group has a C), 
+`is_standalone_cancel` (C with neither: the trader-initiated / churn
+count). Flag asymmetry: `in_replace_group` is trivially TRUE for every A
+row (its own leg) — it classifies C rows; classify A rows with
+`in_cancel_group`. **Single source of truth — never
 re-derive the window logic in a consumer** (`hourly_liquidity_metrics`
 was refactored to join it; sums unchanged). Verified: 9,098,433 rows =
 silver rows, all keys distinct, standalone = 3,643,556 (the independently
@@ -148,6 +151,16 @@ opening minute exactly (21,295 msgs on 07-30); realized vol 100–200 bps
 ranking matches the range ranking (earnings day 07-31 highest); TWAP >
 VWAP on the two down days (equal time-weighting vs volume-weighting).
 
+**Aggressor-side / large-order additions** (complete the Phase 2 set):
+`order_flow_imbalance` + `taker_buy_volume` / `taker_sell_volume` /
+`cross_volume` at hourly, minute, and day grains (identity
+buy+sell+cross = trade_volume verified exact at all grains); day-grain
+`large_order_threshold` (p95 of genuine adds via `approx_percentile`),
+`large_order_count`, `large_order_share` in `daily_summary`. Anchors
+(MSFT, 4 days): thresholds 201–228 shares, shares 3.6–4.7% (≤5% by
+construction), OFI negative all four days (the July–Aug 2019 sell-off
+period), most negative −0.137 on the 07-31 earnings day.
+
 
 ## Phase 2 — surveillance-flavored metrics
 
@@ -155,7 +168,8 @@ VWAP on the two down days (equal time-weighting vs volume-weighting).
 |---|---|---|
 | `cancel_to_trade_ratio` | standalone_cancels / nullif(trades, 0) — classic layering/spoofing indicator; MUST use standalone cancels, raw C counts are inflated by execution legs (Rule 1) | built (day grain, `daily_summary`) |
 | `message_rate_burst` | max per-minute message count vs daily mean | built (`peak_minute_messages` + `burst_ratio` in `daily_summary`, from the minute model) |
-| `large_order_share` | share of adds with size > p95(size) per symbol-day; exclude replace-A legs (Rule 3) so one modify doesn't count as a fresh large order | remaining — cheap now: join `itch_mbo_cleaned` to `message_flags` on `message_key`, filter adds with `not in_replace_group`, daily percentile then hourly share |
+| `order_flow_imbalance` | (taker_buy − taker_sell) / (taker_buy + taker_sell) from T rows, which carry the AGGRESSOR's side; crosses (side=N) tracked separately in `cross_volume` and excluded from the denominator; identity buy+sell+cross = trade_volume holds exactly at every grain | built (hourly, minute, day) |
+| `large_order_share` | share of adds with size > p95(size) per symbol-day; replace-A legs excluded — but NOT via `in_replace_group`, which is trivially TRUE for every A row (its own leg): use `in_cancel_group` (an A whose group also holds a C is the new-order leg of a replace pair, Rule 3) | built (day grain, `daily_summary`: threshold + count + share) |
 
 Message-group flags decision resolved: materialized as `message_flags`
 (see Tier 2 section) — consumers join, never re-derive.

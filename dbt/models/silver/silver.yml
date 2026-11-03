@@ -82,7 +82,14 @@ models:
       - name: in_replace_group
         description: >
           TRUE when this message's group contains an A row — i.e. the C is
-          the modify leg of an order replace (C old + A new).
+          the modify leg of an order replace (C old + A new). NOTE: this is
+          trivially TRUE for every A row (its own leg); it classifies C
+          rows. To classify A rows use in_cancel_group.
+      - name: in_cancel_group
+        description: >
+          TRUE when this message's group contains a C row. For A rows this
+          marks the new-order leg of a replace pair (C old + A new, Rule 3)
+          as opposed to a genuine new add.
       - name: is_standalone_cancel
         description: >
           TRUE for a trader-initiated cancel: action = C, group has no
