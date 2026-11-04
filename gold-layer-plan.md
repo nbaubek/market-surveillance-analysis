@@ -57,11 +57,17 @@ Counting caveat: T and F from one execution carry the SAME size — counting
 or summing across both double-counts (Phase 1 definitions below respect
 this).
 
-Book-replay caveat: silver excludes the R book-clear rows, so a from-scratch
-replay starts each day empty and misses depth carried over from prior
-sessions (GTC orders). Databento injects a synthetic start-of-day snapshot
-precisely to seed state; decide later whether replay consumes bronze
-(R + snapshot state) or silver accepts the open distortion.
+Book-replay caveat — RESOLVED empirically (2026-11-04, all 4 ingested
+days): the synthetic start-of-day snapshot is a SINGLE R book-clear row
+(~07:07–07:09 UTC ≈ 3am ET, sequence 0, order_id 0, side N, no price,
+flags 8) with NO re-injected A records — zero messages of any kind in the
+5 minutes after it, zero A records in the first 60s. Each day is fully
+self-contained: R, ~50 min of silence, then organic pre-market flow from
+~8 UTC (4am ET). A per-(symbol, day) replay from an EMPTY book over
+silver-only is therefore exact — bronze holds nothing extra except the R
+row itself, so no bronze seeding is needed. GTC orders simply re-enter as
+ordinary A messages. (Rationale for recording: this was the main blocker
+keeping Phase 3 at "deliberate decision"; it isn't a blocker.)
 
 ## Phase 1 — `hourly_liquidity_metrics` + `daily_summary` (built, verified)
 
@@ -176,27 +182,86 @@ Message-group flags decision resolved: materialized as `message_flags`
 
 ## Phase 3 — top-of-book reconstruction (advanced, deliberate decision)
 
-Replay per (symbol, ts_event_day): apply A/M/C to order state — C carries
-the size delta and is the only state-mutating action (T and F are
-book-state no-ops per the order-tracking tutorial; T carries no
-resting-order information at all — Rule 2), then rank best bid/ask at each
+Replay per (symbol, ts_event_day) from an EMPTY book (see the resolved
+book-replay caveat above): apply A/M/C to order state — C carries
+the size delta and is the only state-mutating record *within an execution*
+(T and F are book-state no-ops per the order-tracking tutorial; A and M
+obviously mutate too; T carries no resting-order information at all —
+Rule 2), then rank best bid/ask at each
 point in time: best bid = max(price) among
 live bids, best ask = min(price) among live asks → spread series → hourly
-mean/median/p95 spread. This is the most expensive query in the system
-(window functions over the full message stream, per symbol-day).
+mean/median/p95 spread, top-of-book depth, book imbalance. This is the
+most expensive query in the system (window functions over the full
+message stream, per symbol-day).
 
-See the book-replay caveat above: silver-only replay misses GTC depth
-carried into the session; seeding from bronze's start-of-day snapshot is
-the correct-but-more-complex option.
+Feasibility step 1 (snapshot anatomy) — DONE, see the caveat above:
+silver-only replay is the architecture; bronze seeding unnecessary.
+Additional findings that simplify replay logic (4 MSFT days; re-verify
+when more symbols/days land):
+- **Zero `M` rows** — modifies manifest entirely as C+A replace pairs
+  (Rule 3). Replay mutates via A (insert) and C (subtract) only.
+- **C semantics are uniform**: C.size is ALWAYS the quantity to remove
+  from the order at C.price — standalone cancel (partial or full),
+  execution leg (C.size = F.size, verified 27,350/27,350), replace leg.
+  One rule covers all three; order dies when remaining hits 0.
+- **Zero `action='N'` rows** — side='N' occurs only as a SIDE on cross T
+  rows (cross_volume > 0), never as an action.
+- Ordering: sequence is channel-wide (MSFT's first daily message lands at
+  ~237k–240k because other symbols precede it on channel 0) and resets
+  daily; replay ordering key = (channel_id, sequence) within the day,
+  with ts_event as cross-check.
+
+Feasibility step 2 — price-level replay prototype: **DONE, validated**
+(2026-11-04, MSFT 2019-07-30). Approach: running ΣA − ΣC per (side, price)
+level in **sequence space** (order key: channel_id, sequence, C-before-A
+tie-break, order_id), level state intervals [seq_i, seq_next), live rows
+(net > 0) joined to evaluation points. Results:
+- **Invariants exact**: 0 negative level states across all 1,261,123
+  A/C events (every C found sufficient quantity at its (side, price) —
+  the attribution rule holds); 0 crossed minutes; min spread $0.01;
+  A-record prices penny-gridded (622,601/622,608).
+- **Event-instant validation**: against the PRE-TRADE book (intervals
+  inclusive of the trade's own group: `valid_to_seq >= trade.sequence`),
+  95.7% of side='B' prints and 99.0% of side='A' prints land EXACTLY at
+  the reconstructed touch (residual ≈ genuine price-improvement/hidden
+  prints; 7% of prints are sub-penny). Wrong-book control (book shifted
+  1 hour): 2.3%. This re-verifies **T.side = AGGRESSOR side** at the
+  event level — `order_flow_imbalance` in the gold models is safe.
+- **Semantics trap recorded**: T and its C share identical ts_event in
+  4,186/4,186 sampled groups, so timestamp ordering cannot separate a
+  trade from its own book update — evaluation points must be expressed
+  in sequence space; and the interval end convention decides whether
+  you get the pre-trade (`>=`) or post-event (`>`) book. My first two
+  attempts got this wrong and produced the "all prints at mid" artifact.
+- **Cost**: minute-checkpoint book CTAS 27s for one symbol-day
+  (~766 minute rows); validation queries 10–31s. Extrapolated naively
+  to 6 symbols × 250 days ≈ hours of Athena time per full backfill —
+  a per-day incremental pattern (like silver) or trade-instant-only
+  evaluation keeps it trivial; minute-boundary book remains valid for
+  minute-grain spread/depth/imbalance regardless.
+- Prototype artifact: `market_surveillance_gold.prototype_minute_book_
+  20190730` (scratch CTAS under athena-results/, auto-expires in 30
+  days; drop the Glue table when done with it).
+
+Remaining: per-order replay deliberately deferred (order-lifetime
+metrics only); MBP-1 external reference optional given the 96–99%
+exact-touch internal validation; then the build decision (production
+model design: likely a `book_state`/level-interval model + a
+spread/depth aggregate on top) closes open question 3.
 
 Alternative if the cost isn't justified: approximate spread from trade
-prices (Roll estimator or high-low), documented as approximate.
+prices (Roll estimator or high-low), documented as approximate — kept
+only as fallback, not as the main-layer substitute.
 
 ## Open questions (to resolve during research)
 
 1. Indicator thresholds: percentile basis for "large order", burst window size.
 2. Session handling: UTC hours vs exchange hours (pre/post-market split)?
 3. Spread: full reconstruction (phase 3) vs approximation vs skip.
+   VALIDATED: silver-only replay proven correct on one symbol-day
+   (invariants + 96–99% exact-touch at event instant, 2026-11-04);
+   decision reduced to whether to build the production model now or
+   after scale-up.
 4. RESOLVED: gold models are Iceberg `table` materialization — full CTAS
    rebuild per run (volume is tiny). If incremental is ever wanted, mirror
    silver's merge window/backfill pattern, not a high-water mark.
