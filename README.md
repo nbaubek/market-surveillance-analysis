@@ -15,7 +15,7 @@ streaming ingestion → Apache Iceberg medallion (bronze/silver/gold) on AWS
 
 ## dbt: silver layer
 
-Six models today:
+Eight models today:
 
 **Silver** (`dbt/models/silver/`, Iceberg tables in `market_surveillance_silver`):
 
@@ -41,6 +41,15 @@ rebuilt fully each run — aggregate volume is tiny):
   detection, TWAP, realized volatility, minute bars for charts).
 - **`volume_profile`** — volume by 10-cent price bucket per (symbol, day)
   with `volume_share`; the horizontal volume-at-price distribution.
+- **`book_state`** — Phase 3 replay: displayed order book as price-level
+  intervals (quantity at (side, price) from one event to the level's
+  next event), incremental-merge like the silver models. Reconstructs
+  the book at any point without storing per-message book copies;
+  validated in `phase3-prototype/` (0 negative quantities, 96–99%
+  exact-touch prints vs the pre-trade book).
+- **`minute_book_metrics`** — top-of-book panel per (symbol, day,
+  minute): best bid/ask, spread, mid, top/total displayed depth, live
+  levels, book imbalance. Reconciled exactly to the validated prototype.
 - **`daily_summary`** — one row per (symbol, day): the dashboard landing
   table. Day OHLC (first/last tape print), recomputed day VWAP, totals,
   active hours, peak message hour, cancel ratios including the Phase-2

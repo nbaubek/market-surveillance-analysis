@@ -243,11 +243,32 @@ tie-break, order_id), level state intervals [seq_i, seq_next), live rows
   20190730` (scratch CTAS under athena-results/, auto-expires in 30
   days; drop the Glue table when done with it).
 
+**Production models BUILT and reconciled (2026-11-04):**
+- `book_state` (`dbt/models/gold/book_state.sql`) — price-level
+  intervals (seq_from/valid_to_seq + ts_from/ts_to, net_qty, merge key =
+  triggering event's message_key), incremental with the standard
+  dual-mode window. The window partition includes ts_event_day (sequence
+  resets daily — the prototype's single-day scope hid this). Emits only
+  rows with net_qty > 0 AND observable intervals: a same-price replace
+  (C+A in one group, C ordered first) creates a zero-length intra-message
+  state — 7,601 such unobservable rows existed before the guard, caught
+  by the well-formedness test on first build.
+- `minute_book_metrics` (`dbt/models/gold/minute_book_metrics.sql`) —
+  best bid/ask, spread, mid, top/total depth, live levels, top-of-book
+  imbalance per (symbol, day, message-active minute), full rebuild.
+- Singular tests: non-negative quantities, well-formed intervals, not
+  crossed (locked bid=ask is legal), penny-grid quotes. 35/35 dbt tests
+  pass.
+- **Reconciliation vs prototype: 766/766 rows, 0 mismatches on all nine
+  columns** (2019-07-30). 4-day panel: 3,306 two-sided minutes, 0
+  crossed, 0 locked, min spread $0.01, avg top depth ~460/410 shares.
+- Prototype queries and results preserved as evidence in
+  `phase3-prototype/` (also the regression recipe).
+
 Remaining: per-order replay deliberately deferred (order-lifetime
 metrics only); MBP-1 external reference optional given the 96–99%
-exact-touch internal validation; then the build decision (production
-model design: likely a `book_state`/level-interval model + a
-spread/depth aggregate on top) closes open question 3.
+exact-touch internal validation; hourly/daily spread aggregation is a
+cheap rollup of minute_book_metrics when the dashboard needs it.
 
 Alternative if the cost isn't justified: approximate spread from trade
 prices (Roll estimator or high-low), documented as approximate — kept
@@ -257,11 +278,10 @@ only as fallback, not as the main-layer substitute.
 
 1. Indicator thresholds: percentile basis for "large order", burst window size.
 2. Session handling: UTC hours vs exchange hours (pre/post-market split)?
-3. Spread: full reconstruction (phase 3) vs approximation vs skip.
-   VALIDATED: silver-only replay proven correct on one symbol-day
-   (invariants + 96–99% exact-touch at event instant, 2026-11-04);
-   decision reduced to whether to build the production model now or
-   after scale-up.
+3. RESOLVED: spread via full price-level reconstruction — production
+   models `book_state` + `minute_book_metrics` built, tested, and
+   reconciled exactly against the validated prototype (2026-11-04).
+   Roll/high-low approximations dropped from consideration.
 4. RESOLVED: gold models are Iceberg `table` materialization — full CTAS
    rebuild per run (volume is tiny). If incremental is ever wanted, mirror
    silver's merge window/backfill pattern, not a high-water mark.

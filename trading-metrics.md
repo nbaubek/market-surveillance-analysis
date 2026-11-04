@@ -115,19 +115,41 @@ by consumers on `message_key`. Single source of truth — never re-derived.
 | `trades` / `trade_volume` / `notional_volume` | per-bucket tape counts/sums | Volume-at-price distribution |
 | `volume_share` | bucket volume / symbol-day volume (sums to 1) | The horizontal volume profile: where value actually traded; cross-symbol safe |
 
+## Built: displayed-liquidity / book metrics (Phase 3 replay)
+
+**Objects: `market_surveillance_gold.book_state`** (price-level
+intervals; the replay engine — see `phase3-prototype/` for validation
+evidence) **and `market_surveillance_gold.minute_book_metrics`** (the
+consumable panel; model: `dbt/models/gold/minute_book_metrics.sql`).
+
+| Metric | Definition | Why it exists |
+|---|---|---|
+| `best_bid` / `best_ask` | Highest live bid / lowest live ask at the minute boundary | The touch — reference price for everything below |
+| `spread` | best_ask − best_bid | Transaction cost / liquidity tightness; locked (0) is legal, crossed never (tested) |
+| `mid` | (best_bid + best_ask) / 2 | Fair-value reference; anchors hidden/price-improved print analysis |
+| `bid_depth_top` / `ask_depth_top` | Displayed quantity at the touch | Size actually available at the best price |
+| `bid_depth_total` / `ask_depth_total` | Summed displayed depth per side | Book pressure / resilience |
+| `live_levels` | Count of live price levels | Book breadth at a glance |
+| `book_imbalance` | (bid_top − ask_top) / (their sum), in [−1, 1] | Displayed-liquidity imbalance — the book-side counterpart of order_flow_imbalance; persistent extremes at the touch flag one-sided quoting |
+
+Underlying replay rules (verified; enforced by singular dbt tests):
+mutation via A/C only, C.size always the quantity removed, quantities
+never negative, intervals well-formed, quotes never crossed and
+penny-gridded. Validated to 95.7%/99.0% exact-touch prints against the
+pre-trade book at event instants.
+
 ---
 
 ## Planned (not yet built)
 
 | Metric | Working definition | Target object | Why / status |
 |---|---|---|---|
-| Spread (mean/median/p95) | Top-of-book replay: mutate order state via A and C (zero M rows — modifies arrive as C+A; C.size is always the quantity to remove, whether standalone cancel, execution leg, or replace leg), rank best bid/ask per event | new gold model, hourly grain | True transaction-cost measure; most expensive query in the system. Initial-state question RESOLVED empirically: the synthetic start-of-day snapshot is a single R row with no re-injected adds — each day's book builds organically from empty, so silver-only replay is exact and bronze seeding is unnecessary. Roll/high-low remain only as a cost fallback, not a substitute — open question 3 |
-| Top-of-book depth | Live shares at best bid/ask from the same replay | same model | Liquidity quality beyond counts |
 | Cancels per resting order | standalone cancels / distinct resting order_ids (A/M/C/F only — order_id=0 on T, Rule 2) | daily / new order-lifecycle model | Per-order churn intensity |
 | Time-to-cancel share | share of orders standalone-cancelled within N seconds of add | order-lifecycle model | Flickering-liquidity / spoof signature; needs order_id-level event pairing |
 | Modify-to-cancel ratio | replaces / standalone cancels | daily | Distinguishes re-pricing behavior from withdrawal behavior |
 | Session splits | same metrics split pre-market / RTH / post-market (ET boundaries) | dimension on existing models | Pre-market microstructure differs structurally from RTH; UTC-hours-only hides it — open question 2 |
 | Baselines / z-scores | per-symbol rolling distributions of the indicators above (needs the 2025 multi-symbol year) | views or a gold baseline model | "Understand normal before detecting abnormal": anomaly detection is only meaningful against a per-symbol, per-time-of-day baseline; deferred until the dataset is big enough to define one |
+| Hourly/daily spread rollup | mean/median/p95 of minute_book_metrics spread per hour/day | view or small model over minute_book_metrics | Dashboard convenience; trivial aggregate, build when the dashboard needs it |
 
 ### Deliberately NOT metrics
 

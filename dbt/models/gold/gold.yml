@@ -1,6 +1,109 @@
 version: 2
 
 models:
+  - name: book_state
+    description: >
+      Phase 3 replay: displayed order-book state as price-level intervals,
+      one row per live level state — displayed quantity at (side, price)
+      from event seq_from until the level's next event (valid_to_seq,
+      NULL = still live). Reconstructs the book at any point in time
+      without storing a per-message book copy. Mutation = A (insert) and
+      C (subtract C.size) only; window partition includes ts_event_day
+      (sequence resets daily); ordering is (channel_id, sequence,
+      C-before-A tie-break, order_id) — timestamps cannot order events
+      (a trade and its book update share identical ts_event). Incremental
+      merge on the triggering event's message_key with the same dual-mode
+      window as message_flags. Evaluation conventions for consumers
+      (pre-trade vs post-event) are documented in the model header and
+      gold-layer-plan.md. Validated in phase3-prototype/: 0 negative
+      level states across all events, 95.7%/99.0% exact-touch prints.
+    columns:
+      - name: message_key
+        description: >
+          message_key of the A/C event that produced this state; the
+          merge key (one state row per book-mutating event whose level
+          stayed live).
+        data_tests: [not_null]
+      - name: side
+        description: Book side of the level (B=bid, A=ask).
+        data_tests: [not_null]
+      - name: price
+        description: Level price, DECIMAL(18,9), penny-gridded (tested downstream).
+        data_tests: [not_null]
+      - name: net_qty
+        description: >
+          Displayed quantity at the level during this interval
+          (aggregated across orders at the price). Strictly positive by
+          construction (a zeroing C ends the interval instead); enforced
+          by a singular test.
+        data_tests: [not_null]
+      - name: seq_from
+        description: >
+          Sequence of the event starting this state; the interval is
+          valid for sequences after seq_from (see conventions in the
+          model header for exact end-point semantics).
+        data_tests: [not_null]
+      - name: valid_to_seq
+        description: >
+          Sequence of the level's next event (state end); NULL = level
+          still live at end of data. Must be > seq_from (tested).
+      - name: ts_from
+        description: ts_event of the event starting this state (timestamp-space interval start).
+        data_tests: [not_null]
+      - name: ts_to
+        description: >
+          ts_event of the level's next event (timestamp-space interval
+          end, exclusive); NULL = still live.
+      - name: symbol
+        description: Ticker (identity partition).
+        data_tests: [not_null]
+      - name: ts_event_day
+        description: Trading day (identity partition; sequence resets at its boundary).
+        data_tests: [not_null]
+
+  - name: minute_book_metrics
+    description: >
+      Phase 3 book panel at minute grain: one row per (symbol, trading
+      day, UTC minute with book content) — best bid/ask, spread, mid,
+      top-of-book depth, total displayed depth per side, live level
+      count, and top-of-book imbalance. Evaluates book_state intervals
+      at minute boundaries of message-active minutes (checkpoints from
+      minute_liquidity_metrics). Early pre-market minutes can be
+      one-sided (NULL side); locked books (bid = ask) are legal. Full
+      rebuild every run.
+    columns:
+      - name: symbol
+        description: Ticker.
+        data_tests: [not_null]
+      - name: event_minute
+        description: UTC minute of day (0–1439) of the evaluation boundary.
+      - name: best_bid
+        description: Highest live bid price at the boundary; NULL if no bids displayed.
+      - name: best_ask
+        description: Lowest live ask price at the boundary; NULL if no asks displayed.
+      - name: spread
+        description: best_ask − best_bid; NULL when one-sided. Zero (locked) is a legal state; negative is tested against.
+      - name: mid
+        description: (best_bid + best_ask) / 2; NULL when one-sided.
+      - name: bid_depth_top
+        description: Displayed quantity at best bid.
+      - name: ask_depth_top
+        description: Displayed quantity at best ask.
+      - name: bid_depth_total
+        description: Total displayed bid depth (all live bid levels).
+      - name: ask_depth_total
+        description: Total displayed ask depth (all live ask levels).
+      - name: live_levels
+        description: Count of live price levels both sides at the boundary.
+      - name: book_imbalance
+        description: >
+          (bid_depth_top − ask_depth_top) / (their sum) in [−1, 1] —
+          displayed-liquidity imbalance at the touch; the book-side
+          counterpart of order_flow_imbalance. NULL when one-sided.
+      - name: ts_event_day
+        description: Trading day (identity partition).
+        data_tests: [not_null]
+
   - name: hourly_liquidity_metrics
     description: >
       Gold Phase 1: hourly liquidity metrics per (symbol, ts_event_day,
