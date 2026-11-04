@@ -4,12 +4,14 @@ Nasdaq TotalView-ITCH market-order-book analytics: Databento → contract-valida
 streaming ingestion → Apache Iceberg medallion (bronze/silver/gold) on AWS
 (S3 + Glue Data Catalog + Athena), orchestrated in Python.
 
-- Ingestion CLI: `src/ingestion/` (`uv run --env-file .env python -m src.ingestion.ingest`)
-- Infrastructure: `infra/` (Terraform: bucket, Glue database, Athena workgroup)
-- Transformation: `dbt/` (silver model — see "dbt: silver layer" below)
-- Iceberg maintenance queries: `iceberg-maintain-queries.md`
-- Data contract: `src/ingestion/schema.py` (see `CLAUDE.md` for the full contract notes)
-- Source dataset reference: `dataset-info.md` (Databento XNAS.ITCH normalization)
+- Ingestion CLI: [`src/ingestion/`](src/ingestion/) (`uv run --env-file .env python -m src.ingestion.ingest`)
+- Infrastructure: [`infra/`](infra/) (Terraform: bucket, Glue database, Athena workgroup)
+- Transformation: [`dbt/`](dbt/) (silver model — see "dbt: silver layer" below)
+- Iceberg maintenance queries: [`iceberg-maintain-queries.md`](iceberg-maintain-queries.md)
+- Data contract: [`src/ingestion/schema.py`](src/ingestion/schema.py) (see [`CLAUDE.md`](CLAUDE.md) for the full contract notes)
+- Source dataset reference: [`dataset-info.md`](dataset-info.md) (Databento XNAS.ITCH normalization)
+- Metric catalog: [`trading-metrics.md`](trading-metrics.md) (every metric built and
+  planned, why it exists, which table owns it)
 
 ## dbt: silver layer
 
