@@ -99,6 +99,17 @@ keyed as (
         )))) as message_key
     from deduplicated
     where _dup_rank = 1 and action <> 'R'
+    -- Databento's synthetic day-boundary book cleanup: at 00:00:00.0x UTC it
+    -- emits cancels for orders left resting from the PREVIOUS session (AAPL:
+    -- ~896 rows in the first 100ms of each day; MSFT: none — its after-hours
+    -- book drains naturally). These rows carry ts_event at day start but
+    -- sequence numbers from the prior session's space, breaking sequence
+    -- <-> time monotonicity, and they reference orders whose adds are
+    -- outside any day-self-contained window. Like R, they are synthetic
+    -- book management, not market activity — excluded. The feed is
+    -- otherwise silent until ~8 UTC (4am ET), so a 1-second guard is safe.
+    and not (action = 'C'
+             and ts_event < date_trunc('day', ts_event) + interval '1' second)
 
 )
 

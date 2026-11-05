@@ -4,10 +4,19 @@ models:
   - name: itch_mbo_cleaned
     description: >
       Deduplicated MBO message stream. Same grain as bronze (one row per
-      message event). Incremental merge on message_key: by default every run
-      re-processes a 5-day rolling window; explicit start_date/end_date vars
-      backfill any range idempotently (matched messages update in place, new
-      ones insert).
+      message event), minus two classes of Databento SYNTHETIC book
+      management, both excluded as non-market activity: (1) R book-clear
+      records (the clear-book part of the synthetic start-of-day snapshot,
+      one per trading day), and (2) the day-boundary cleanup burst — C rows
+      within the first second of each UTC day that cancel orders left
+      resting from the previous session (AAPL ~900-1300/day; MSFT none).
+      The burst rows carry ts_event at day start but sequence numbers from
+      the prior session's space, which breaks sequence/time monotonicity
+      and corrupts sequence-ordered, timestamp-stamped replay intervals.
+      Incremental merge on message_key: by default every run re-processes
+      a 5-day rolling window; explicit start_date/end_date vars backfill
+      any range idempotently (matched messages update in place, new ones
+      insert).
     columns:
       - name: message_key
         description: >

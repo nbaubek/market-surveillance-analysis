@@ -210,6 +210,20 @@ when more symbols/days land):
   ~237k–240k because other symbols precede it on channel 0) and resets
   daily; replay ordering key = (channel_id, sequence) within the day,
   with ts_event as cross-check.
+- **Day-boundary cleanup burst (found via AAPL, 2026-11-05):** Databento
+  emits cancels for previous-session resting orders at 00:00:00.0x UTC —
+  ts_event at day start, sequence from the PRIOR session's space. These
+  rows broke ts↔sequence monotonicity (~4.5k inversions on AAPL; MSFT had
+  none — its after-hours book drains naturally) and fabricated
+  "live-since-midnight" phantom levels: 1,425 crossed minutes in
+  minute_book_metrics. Fixed by excluding the burst in silver (C rows
+  within 1s of UTC midnight, alongside R) + full-refreshing flags and
+  book_state. Two lessons institutionalized: the non-negativity test now
+  recomputes independently from silver (testing post-filter book_state
+  was structurally blind), and a new ts-inversion test guards the
+  ordering invariant the hand-checked prototype only ever verified on
+  MSFT. Post-fix: 0 crossed, 0 locked, ghost windows clean, AAPL
+  standalone_cancels excludes the synthetic cancels.
 
 Feasibility step 2 — price-level replay prototype: **DONE, validated**
 (2026-11-04, MSFT 2019-07-30). Approach: running ΣA − ΣC per (side, price)
@@ -306,3 +320,6 @@ only as fallback, not as the main-layer substitute.
    Built ahead of the 2025 scale-up because the minute model and the
    upcoming `large_order_share` consume it; window functions run once per
    window instead of once per consumer per rebuild. See the Tier 2 section.
+9. Glossary: collect plain-language definitions of the metrics and market
+   terms (trading-metrics.md defines them technically; a reader-friendly
+   glossary is still missing). Register for a dedicated docs pass.
