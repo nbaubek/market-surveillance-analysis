@@ -77,6 +77,32 @@ Athena query results land under `s3://trading-surveillance-data/athena-results/`
 
 ## Orchestration with Dagster+
 
+Decision (2026-11-05): **Dagster+ orchestrates ingestion and dbt.** AWS
+Lambda was evaluated and rejected: 15-minute invocation cap vs.
+multi-minute streaming ingestion and (at 2025 six-symbol scale) dbt
+backfills; container-image packaging for PyIceberg/pyarrow; and required
+IAM roles despite the no-IAM-work constraint. Compute split: Athena
+already runs all dbt SQL serverless; Dagster+ runs the Python ingestion
+CLI — no data moves (it stays in S3), and packages install automatically
+from project dependencies into the Dagster+ code location.
+
+Operating model:
+
+- Ingestion (`src/ingestion/`) and dbt (`dbt/`) become Dagster
+  assets/jobs on Dagster+ compute (managed serverless runs by default; a
+  hybrid agent is the fallback if AWS-role-based credentials become
+  preferable to injected secrets).
+- Dagster daily partitions map 1:1 onto the pipeline's day-aligned
+  windows: the ingestion CLI's `--start/--end`, and the dbt
+  `start_date`/`end_date` vars shared by `itch_mbo_cleaned`,
+  `message_flags`, and `book_state`.
+- Triggers are native Dagster — no Lambda/EventBridge glue: **schedules**
+  (cron) for the 5-day catch-up runs, **sensors** for event-driven
+  starts, asset dependencies to chain ingestion → silver → gold, and
+  declarative automation / freshness policies for downstream
+  materialization.
+- AWS credentials for the ingestion job come from Dagster+ environment
+  variables/secrets — never committed to the repo.
 - Use Dagster's built-in logging in order to analyze logs if needed
 
 
