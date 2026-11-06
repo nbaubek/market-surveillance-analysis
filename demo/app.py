@@ -102,10 +102,12 @@ def mm(minute: int) -> str:
 # ECharts helpers
 
 
-def base_opt(x: list, series: list, legend: bool, y_fmt: str | None = None) -> dict:
+def base_opt(x: list, series: list, legend: bool) -> dict:
     opt: dict = {
         "backgroundColor": "transparent",
-        "animationDuration": 350,
+        "animation": True,
+        "animationDuration": 600,
+        "animationEasing": "cubicOut",
         "grid": {"left": 58, "right": 16, "top": 34 if legend else 22, "bottom": 42},
         "tooltip": {
             "trigger": "axis",
@@ -129,8 +131,6 @@ def base_opt(x: list, series: list, legend: bool, y_fmt: str | None = None) -> d
         },
         "series": series,
     }
-    if y_fmt:
-        opt["yAxis"]["axisLabel"]["formatter"] = y_fmt
     if legend:
         opt["legend"] = {
             "textStyle": {"color": INK2, "fontSize": 12},
@@ -212,7 +212,21 @@ def shell(title: str, *content, active: str = "") -> Html:
         Body(
             Div(
                 Nav(
-                    Span("MARKET SURVEILLANCE", cls="brand"),
+                    Span(
+                        NotStr(
+                            "<svg width='20' height='20' viewBox='0 0 24 24' "
+                            "fill='none' aria-hidden='true'>"
+                            "<path d='M2 14l4-7 4 5 3-10 3 8 4-4 2 2' "
+                            "stroke='url(#brandgrad)' stroke-width='2' "
+                            "stroke-linecap='round' stroke-linejoin='round'/>"
+                            "<defs><linearGradient id='brandgrad' x1='0' y1='0' "
+                            "x2='24' y2='0'><stop stop-color='#3987e5'/>"
+                            "<stop offset='1' stop-color='#199e70'/></linearGradient>"
+                            "</defs></svg>"
+                        ),
+                        "MARKET SURVEILLANCE",
+                        cls="brand",
+                    ),
                     Span(
                         navlink("/", "Overview", "ov"),
                         navlink("/surveillance", "Surveillance", "sv"),
@@ -231,12 +245,14 @@ def shell(title: str, *content, active: str = "") -> Html:
     )
 
 
-def card(title: str, subtitle: str | None, *body, guide: str | None = None) -> Div:
+def card(title: str, subtitle: str | None, *body, guide: str | None = None,
+         guide_open: bool = False) -> Div:
     guide_el = (
         Details(
             Summary("How to read this", cls="guide-summary"),
             P(guide, cls="guide-text"),
             cls="guide",
+            **({"open": True} if guide_open else {}),
         )
         if guide
         else None
@@ -253,13 +269,35 @@ def card(title: str, subtitle: str | None, *body, guide: str | None = None) -> D
     )
 
 
-def tile(label: str, value: str, sub: str | None = None) -> Div:
+def tile(label: str, value: str, sub: str | None = None,
+         alert: bool = False) -> Div:
     return Div(
         P(label, cls="tile-label"),
         P(value, cls="tile-value"),
         (P(sub, cls="tile-sub") if sub else None),
-        cls="tile",
+        cls="tile alert" if alert else "tile",
     )
+
+
+# Known event context for the snapshot's days (demo-scoped, hardcoded):
+# both symbols reported earnings after the close on 2019-07-30, so 07-31
+# is the event day for each.
+EVENTS: dict[tuple[str, str], str] = {
+    ("MSFT", "2019-07-31"):
+        "Earnings day (reported 07-30 after close) — expect elevated "
+        "volatility and one-sided flow; not every spike is manipulation.",
+    ("AAPL", "2019-07-31"):
+        "Earnings day (reported 07-30 after close) — expect elevated "
+        "volatility and one-sided flow; not every spike is manipulation.",
+}
+
+
+def event_chip(sym: str, day: str):
+    note = EVENTS.get((sym, day))
+    if not note:
+        return None
+    return Div(Span("EARNINGS DAY", cls="chip-tag"), Span(note, cls="chip-note"),
+               cls="chip")
 
 
 def lens_badge(n: int, name: str) -> Span:
@@ -345,18 +383,44 @@ def home(req, sym: str | None = None, day: str | None = None):
     )
 
     x = [mm(r["event_minute"]) for r in minutes]
-    closes = [r["close"] for r in minutes]
-    vwaps = [r["vwap"] for r in minutes]
+    closes = [round(r["close"], 2) if r["close"] is not None else None
+              for r in minutes]
+    vwaps = [round(r["vwap"], 2) if r["vwap"] is not None else None
+             for r in minutes]
     buys = [r["taker_buy_volume"] for r in minutes]
     sells = [-r["taker_sell_volume"] for r in minutes]
 
     med_spread = sorted(b["spread"] for b in book if b["spread"] is not None)
     med_spread = med_spread[len(med_spread) // 2] if med_spread else None
 
+    # cumulative intraday realized volatility from minute close-to-close log
+    # returns (sparse-minute approximation, same as the gold layer)
+    volrows = q(
+        """
+        with mc as (
+            select event_minute, close,
+                   lag(close) over (order by event_minute) as prev
+            from minute_metrics
+            where symbol = ? and strftime(ts_event_day, '%Y-%m-%d') = ?
+              and close is not null
+        )
+        select event_minute,
+               sqrt(sum(power(ln(close / prev), 2))
+                    over (order by event_minute)) * 10000 as cum_rvol
+        from mc
+        where prev is not null
+        """,
+        [sym, day],
+    )
+    cum_vol_opt = base_opt([mm(r["event_minute"]) for r in volrows], [
+        line("Cumulative realized vol",
+             [round(r["cum_rvol"], 1) for r in volrows], AQUA, area=True),
+    ], legend=False)
+
     price_opt = base_opt(x, [
         line("Last print", closes, BLUE),
         line("VWAP", vwaps, ORANGE),
-    ], legend=True, y_fmt="{value:.2f}")
+    ], legend=True)
 
     vol_opt = base_opt(x, [
         bar("Buy-initiated", buys, BLUE),
@@ -394,6 +458,7 @@ def home(req, sym: str | None = None, day: str | None = None):
 
     content = [
         filters_row("/", sym, day, SYMBOLS, DAYS),
+        event_chip(sym, day),
         P(
             f"Everything below describes {sym} on {day}, reconstructed "
             "order-by-order from Nasdaq's TotalView-ITCH feed. Change the "
@@ -418,6 +483,7 @@ def home(req, sym: str | None = None, day: str | None = None):
         Div(
             card("Price and VWAP", "Minute grain, tape prints (crosses included)",
                  chart(price_opt, 320),
+                 guide_open=True,
                  guide="Two lines: the last traded price each minute, and VWAP — "
                       "the volume-weighted average price, i.e. what the average "
                       "participant actually paid. Price holding far ABOVE VWAP "
@@ -435,6 +501,16 @@ def home(req, sym: str | None = None, day: str | None = None):
             cls="grid2",
         ),
         Div(
+            card("Intraday volatility",
+                 "Cumulative realized volatility, bps — how far price has "
+                 "travelled minute-by-minute by this point in the day",
+                 chart(cum_vol_opt, 340),
+                 guide="Each step adds that minute's close-to-close move "
+                      "(squared, then square-rooted cumulatively — the standard "
+                      "'realized volatility' measure, in basis points). Steep "
+                      "sections are turbulent; flat sections are quiet. A burst "
+                      "of steepness in the final minutes on a thin day is worth "
+                      "pairing with the close-marking lens."),
             card("Volume profile", "Shares traded by 10-cent price bucket",
                  chart(prof_opt, 340),
                  guide="Where volume actually traded, by price. Fat bars are "
@@ -443,14 +519,14 @@ def home(req, sym: str | None = None, day: str | None = None):
                       "commitment. Pushing price through a thin pocket — "
                       "especially near the close — costs little, which is exactly "
                       "why close-markers like thin sessions."),
-            card("Days side by side", "Same metrics across all days in the snapshot",
-                 dtable,
-                 guide="The same day-level metrics for every day in the snapshot, "
-                      "so outliers jump out: a range or realized-vol spike that "
-                      "the news doesn't explain, a cancel-to-trade ratio far "
-                      "above the other days, a close far from VWAP."),
             cls="grid2",
         ),
+        card("Days side by side", "Same metrics across all days in the snapshot",
+             dtable,
+             guide="The same day-level metrics for every day in the snapshot, "
+                  "so outliers jump out: a range or realized-vol spike that "
+                  "the news doesn't explain, a cancel-to-trade ratio far "
+                  "above the other days, a close far from VWAP."),
     ]
     return (Div(*content, cls="fadein") if hx
             else shell(f"{sym} {day}", *content, active="ov"))
@@ -489,12 +565,14 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
 
     lt_total = lifetimes.get("standalone_cancelled_orders") or 0
     w60 = lifetimes.get("within_60s") or 0
+    w60_share = 100 * w60 / lt_total if lt_total else 0
     spoof_tiles = Div(
         tile("Cancelled orders", f"{lt_total:,}", "fully standalone-cancelled"),
         tile("Median lifetime", f"{lifetimes.get('p50_lifetime_s', 0):.1f}s",
              f"p90 {lifetimes.get('p90_lifetime_s', 0):.0f}s"),
-        tile("Gone within 60s", f"{(100*w60/lt_total if lt_total else 0):.1f}%",
-             "of standalone-cancelled orders"),
+        tile("Gone within 60s", f"{w60_share:.1f}%",
+             "of standalone-cancelled orders",
+             alert=w60_share > 30),
         cls="kpi-row small",
     )
 
@@ -568,6 +646,7 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
 
     content = [
         filters_row("/surveillance", sym, day, SYMBOLS, DAYS),
+        event_chip(sym, day),
         P(
             "Three screens, one per manipulative strategy the data can "
             "actually support. Each compares behaviour against the symbol's "
@@ -584,6 +663,7 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
                 "removed by standalone cancels within 60s of placement",
                 spoof_tiles,
                 chart(spoof_opt, 260),
+                guide_open=True,
                 guide="Spoofing places big orders it intends to cancel, to fake "
                       "supply or demand. 'Large' is defined per symbol-day: the "
                       "95th-percentile add size (replaces excluded — a modify is "
@@ -618,6 +698,7 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
                 "(bid depth − ask depth) / their sum at the touch; blue = bid-heavy",
                 layer_tiles,
                 chart(imb_opt, 260),
+                guide_open=True,
                 guide="Layering stacks multiple orders across price levels on one "
                       "side to manufacture the look of depth. This is the "
                       "displayed balance at the best prices: blue above zero = "
@@ -646,6 +727,7 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
                 "close moves the reference price",
                 close_tiles,
                 chart(close_opt, 260),
+                guide_open=True,
                 guide="The closing print feeds benchmarks, index NAVs and "
                       "option strikes — which is what makes it worth marking. "
                       "Each bar is that minute's buy-minus-sell aggression, "
@@ -734,7 +816,8 @@ CSS = """
 .topnav { display: flex; align-items: center; justify-content: space-between;
           padding: 18px 0 14px; border-bottom: 1px solid %(grid)s; }
 .brand { font-size: 13px; letter-spacing: 0.18em; font-weight: 700;
-         color: %(ink)s; }
+         color: %(ink)s; display: flex; align-items: center; gap: 9px; }
+.brand svg { display: block; filter: drop-shadow(0 0 6px rgba(57,135,229,0.45)); }
 .navlinks { display: flex; gap: 4px; }
 .navlink { color: %(ink2)s; text-decoration: none; font-size: 14px;
            padding: 6px 12px; border-radius: 8px; }
@@ -759,8 +842,26 @@ CSS = """
         border-radius: 12px; padding: 12px 14px; }
 .tile-label { margin: 0; font-size: 11px; letter-spacing: 0.06em;
               color: %(muted)s; text-transform: uppercase; }
-.tile-value { margin: 4px 0 0; font-size: 24px; font-weight: 650; color: %(ink)s; }
+.tile-value { margin: 4px 0 0; font-size: 24px; font-weight: 650;
+              background: linear-gradient(100deg, %(ink)s 55%%, #7fa8e8);
+              -webkit-background-clip: text; background-clip: text;
+              color: transparent;
+              filter: drop-shadow(0 0 10px rgba(57,135,229,0.18)); }
 .tile-sub { margin: 3px 0 0; font-size: 12px; color: %(ink2)s; }
+.tile.alert { border-color: rgba(250,178,25,0.45); animation: pulse 2.2s ease-in-out infinite; }
+.tile.alert .tile-value { background: linear-gradient(100deg, %(ink)s 40%%, %(warn)s);
+                          -webkit-background-clip: text; background-clip: text; }
+@keyframes pulse {
+  0%%, 100%% { box-shadow: 0 0 0 0 rgba(250,178,25,0.0); }
+  50%% { box-shadow: 0 0 14px 2px rgba(250,178,25,0.22); }
+}
+
+.chip { display: flex; align-items: center; gap: 10px; margin: -6px 0 14px;
+        background: rgba(250,178,25,0.07); border: 1px solid rgba(250,178,25,0.35);
+        border-radius: 10px; padding: 8px 12px; max-width: 88ch; }
+.chip-tag { font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em;
+            color: %(warn)s; white-space: nowrap; }
+.chip-note { font-size: 12.5px; color: %(ink2)s; line-height: 1.5; }
 
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
 @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
@@ -774,8 +875,11 @@ CSS = """
             max-width: 60ch; }
 .card-body { padding: 10px 12px 12px; }
 
-.lens-badge { display: inline-block; font-size: 11px; font-weight: 700;
+.lens-badge { display: inline-flex; align-items: center; gap: 8px;
+              font-size: 11px; font-weight: 700;
               letter-spacing: 0.1em; color: %(warn)s; margin-bottom: -4px; }
+.lens-badge::before { content: ""; width: 22px; height: 3px; border-radius: 2px;
+                      background: linear-gradient(90deg, %(warn)s, rgba(250,178,25,0.15)); }
 .caveat { color: %(muted)s; font-size: 12.5px; max-width: 90ch; }
 .intro { color: %(ink2)s; font-size: 14px; max-width: 88ch;
          margin: 2px 0 16px; line-height: 1.55; }
