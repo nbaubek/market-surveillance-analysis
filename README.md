@@ -12,6 +12,9 @@ streaming ingestion → Apache Iceberg medallion (bronze/silver/gold) on AWS
 - Source dataset reference: [`dataset-info.md`](dataset-info.md) (Databento XNAS.ITCH normalization)
 - Metric catalog: [`trading-metrics.md`](trading-metrics.md) (every metric built and
   planned, why it exists, which table owns it)
+- Demo dashboard: [`demo/`](demo/) — zero-AWS FastHTML + ECharts app over a
+  committed Parquet snapshot (DuckDB), with the three manipulation lenses
+  (spoofing, layering, marking the close); Dockerfile for Hugging Face Spaces
 
 ## dbt: silver layer
 

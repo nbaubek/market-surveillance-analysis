@@ -57,8 +57,8 @@ ENV/
 docs/_build/
 site/
 
-# Local data staging
-data/
+# Local data staging (repo root only; demo/data is committed)
+/data/
 
 # --- dbt ---
 
@@ -107,3 +107,5 @@ Thumbs.db
 
 .vscode/
 .idea/
+# FastHTML session key (auto-generated secret)
+demo/.sesskey
