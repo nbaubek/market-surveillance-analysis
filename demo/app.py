@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+from statistics import median
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -98,11 +99,72 @@ def mm(minute: int) -> str:
     return f"{minute // 60:02d}:{minute % 60:02d}"
 
 
+def sparkline_svg(vals: list, sel_i: int, w: int = 110, h: int = 26):
+    """Tiny trend line across all days; selected day as an accent dot."""
+    pts = [(i, v) for i, v in enumerate(vals) if v is not None]
+    if not pts:
+        return NotStr(f"<svg class='spark' width='{w}' height='{h}'></svg>")
+    lo = min(v for _, v in pts)
+    hi = max(v for _, v in pts)
+    rng = (hi - lo) or 1.0
+    n = len(vals)
+
+    def X(i):
+        return 2 + (i * (w - 4) / (n - 1)) if n > 1 else w / 2
+
+    def Y(v):
+        return h - 3 - (v - lo) * (h - 6) / rng
+
+    pl = " ".join(f"{X(i):.1f},{Y(v):.1f}" for i, v in pts)
+    sel = (f"<circle cx='{X(sel_i):.1f}' cy='{Y(vals[sel_i]):.1f}' r='3.2' "
+           f"fill='{BLUE}' stroke='{SURFACE}' stroke-width='1.5'/>"
+           if vals[sel_i] is not None else "")
+    return NotStr(
+        f"<svg class='spark' width='{w}' height='{h}' viewBox='0 0 {w} {h}'>"
+        f"<polyline points='{pl}' fill='none' stroke='#898781' "
+        f"stroke-width='1.5' stroke-linejoin='round' stroke-linecap='round'/>"
+        f"{sel}</svg>")
+
+
+def strip_svg(vals: list, sel_i: int, days: list, fmt, w: int = 640, h: int = 32):
+    """Distribution dot-strip: every day a muted dot, selected day accent."""
+    pts = [(i, v) for i, v in enumerate(vals) if v is not None]
+    if not pts:
+        return Div(cls="strip-empty")
+    lo = min(v for _, v in pts)
+    hi = max(v for _, v in pts)
+    rng = (hi - lo) or 1.0
+    pad = 46
+
+    def X(v):
+        return pad + (v - lo) * (w - 2 * pad) / rng
+
+    med = median(v for _, v in pts)
+    dots = "".join(
+        f"<circle cx='{X(v):.1f}' cy='{h/2}' r='{5 if i == sel_i else 3.5}' "
+        f"fill='{BLUE if i == sel_i else MUTED}' "
+        f"stroke='{SURFACE if i == sel_i else 'none'}' stroke-width='2'>"
+        f"<title>{days[i]}: {fmt(v)}</title></circle>"
+        for i, v in pts
+    )
+    tick = (f"<line x1='{X(med):.1f}' y1='7' x2='{X(med):.1f}' y2='{h-7}' "
+            f"stroke='{AXIS}' stroke-width='1'/>")
+    lo_txt, hi_txt = fmt(lo), fmt(hi)
+    return NotStr(
+        f"<svg class='strip' viewBox='0 0 {w} {h}' preserveAspectRatio='xMidYMid meet'>"
+        f"<text x='4' y='{h/2+3.5}' fill='{MUTED}' font-size='10.5' "
+        f"text-anchor='start'>{lo_txt}</text>"
+        f"<text x='{w-4}' y='{h/2+3.5}' fill='{MUTED}' font-size='10.5' "
+        f"text-anchor='end'>{hi_txt}</text>"
+        f"{tick}{dots}</svg>")
+
+
 # --------------------------------------------------------------------------
 # ECharts helpers
 
 
-def base_opt(x: list, series: list, legend: bool) -> dict:
+def base_opt(x: list, series: list, legend: bool,
+            zoom: str | None = "inside") -> dict:
     opt: dict = {
         "backgroundColor": "transparent",
         "animation": True,
@@ -131,6 +193,19 @@ def base_opt(x: list, series: list, legend: bool) -> dict:
         },
         "series": series,
     }
+    if zoom == "slider":
+        opt["grid"]["bottom"] = 64
+        opt["dataZoom"] = [
+            {"type": "slider", "height": 18, "bottom": 10,
+             "borderColor": AXIS, "backgroundColor": "transparent",
+             "fillerColor": "rgba(57,135,229,0.12)",
+             "handleStyle": {"color": INK2}, "textStyle": {"color": MUTED},
+             "dataBackground": {"lineStyle": {"color": AXIS},
+                                 "areaStyle": {"color": "rgba(255,255,255,0.04)"}}},
+            {"type": "inside"},
+        ]
+    elif zoom == "inside":
+        opt["dataZoom"] = [{"type": "inside"}]
     if legend:
         opt["legend"] = {
             "textStyle": {"color": INK2, "fontSize": 12},
@@ -142,7 +217,8 @@ def base_opt(x: list, series: list, legend: bool) -> dict:
     return opt
 
 
-def line(name: str, ys: list, color: str = BLUE, width: int = 2, area: bool = False) -> dict:
+def line(name: str, ys: list, color: str = BLUE, width: int = 2, area: bool = False,
+         opacity: float | None = None) -> dict:
     s: dict = {
         "name": name,
         "type": "line",
@@ -154,6 +230,8 @@ def line(name: str, ys: list, color: str = BLUE, width: int = 2, area: bool = Fa
     }
     if area:
         s["areaStyle"] = {"color": color, "opacity": 0.1}
+    if opacity is not None:
+        s["lineStyle"]["opacity"] = opacity
     return s
 
 
@@ -205,6 +283,29 @@ def shell(title: str, *content, active: str = "") -> Html:
             *Theme.blue.headers(),
             NotStr("<script src='https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js'></script>"),
             NotStr(
+                "<script>"
+                "(function(){var d=null;"
+                "function tip(){if(!d){d=document.createElement('div');"
+                "d.className='js-tip';document.body.appendChild(d);}return d;}"
+                "function show(e){var el=e.target;"
+                "if(!el||!el.querySelector||!el.closest('svg')){return;}"
+                "var t=el.querySelector(':scope > title');"
+                "if(!t){tip().classList.remove('show');return;}"
+                "var x=tip();x.textContent=t.textContent;"
+                "x.style.left=(e.clientX+14)+'px';"
+                "x.style.top=(e.clientY-30)+'px';"
+                "x.classList.add('show');}"
+                "function hide(){if(d){d.classList.remove('show');}}"
+                "function move(e){if(d&&d.classList.contains('show')){"
+                "d.style.left=(e.clientX+14)+'px';"
+                "d.style.top=(e.clientY-30)+'px';}}"
+                "document.addEventListener('pointerover',show);"
+                "document.addEventListener('pointermove',move);"
+                "document.addEventListener('pointerout',hide);"
+                "document.addEventListener('scroll',hide,true);"
+                "})();</script>"
+            ),
+            NotStr(
                 "<script src='https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js'></script>"
             ),
             NotStr("<style>" + CSS + "</style>"),
@@ -246,7 +347,7 @@ def shell(title: str, *content, active: str = "") -> Html:
 
 
 def card(title: str, subtitle: str | None, *body, guide: str | None = None,
-         guide_open: bool = False) -> Div:
+         guide_open: bool = False, tag: str | None = None) -> Div:
     guide_el = (
         Details(
             Summary("How to read this", cls="guide-summary"),
@@ -259,13 +360,46 @@ def card(title: str, subtitle: str | None, *body, guide: str | None = None,
     )
     return Div(
         Div(
-            H3(title, cls="card-title"),
+            Div(
+                H3(title, cls="card-title"),
+                (Span(tag.upper(), cls="card-tag") if tag else None),
+                cls="card-title-row",
+            ),
             (P(subtitle, cls="card-sub") if subtitle else None),
             guide_el,
             cls="card-head",
         ),
         Div(*body, cls="card-body"),
         cls="card",
+    )
+
+
+def page_hdr(sym: str, day: str, note: str | None = None) -> Div:
+    return Div(
+        H1(sym, cls="hdr-sym"),
+        Div(
+            Span(day, cls="hdr-day"),
+            (Span(note, cls="hdr-note") if note else None),
+            cls="hdr-meta",
+        ),
+        cls="page-hdr",
+    )
+
+
+def strip_legend(day: str, n_days: int) -> Div:
+    def dot(fill, ring=False):
+        stroke = f" stroke='{SURFACE}' stroke-width='1.5'" if ring else ""
+        return (f"<svg width='11' height='11' viewBox='0 0 11 11'>"
+                f"<circle cx='5.5' cy='5.5' r='{4.5 if ring else 3.8}' "
+                f"fill='{fill}'{stroke}/></svg>")
+    return Div(
+        NotStr(
+            f"<span class='lg-item'>{dot(MUTED)} every dot is one trading day "
+            f"({n_days} in the snapshot)</span>"
+            f"<span class='lg-item'>{dot(BLUE, ring=True)} {day} — selected</span>"
+            f"<span class='lg-item'><span class='lg-tick'></span> median</span>"
+        ),
+        cls="strip-legend",
     )
 
 
@@ -418,9 +552,9 @@ def home(req, sym: str | None = None, day: str | None = None):
     ], legend=False)
 
     price_opt = base_opt(x, [
-        line("Last print", closes, BLUE),
-        line("VWAP", vwaps, ORANGE),
-    ], legend=True)
+        line("VWAP", vwaps, ORANGE, width=3, opacity=0.65),
+        line("Last print", closes, BLUE, width=2),
+    ], legend=True, zoom="slider")
 
     vol_opt = base_opt(x, [
         bar("Buy-initiated", buys, BLUE),
@@ -443,20 +577,90 @@ def home(req, sym: str | None = None, day: str | None = None):
                        radius="[0,3,3,0]")],
     }
 
-    dtable = data_table(
-        ["Metric"] + [r["ts_event_day"] for r in daysum],
-        [
-            ["VWAP", *[f"{r['vwap']:.2f}" for r in daysum]],
-            ["Volume (M sh)", *[f"{r['trade_volume']/1e6:.2f}" for r in daysum]],
-            ["Notional ($B)", *[f"{r['notional_volume']/1e9:.2f}" for r in daysum]],
-            ["Range (bps)", *[f"{r['range_bps']:.0f}" for r in daysum]],
-            ["Realized vol (bps)", *[f"{r['realized_vol_bps']:.0f}" for r in daysum]],
-            ["Order-flow imbalance", *[f"{r['order_flow_imbalance']:+.3f}" for r in daysum]],
-            ["Cancel / trade", *[f"{r['cancel_to_trade_ratio']:.1f}" for r in daysum]],
-        ],
+    # ---- day panel: metrics x (trend sparkline, selected, prior, median)
+    day_labels = [r["ts_event_day"] for r in daysum]
+    sel_i = day_labels.index(day) if day in day_labels else len(day_labels) - 1
+    prior_i = sel_i - 1 if sel_i > 0 else None
+
+    spreads = {
+        r["day"]: r["med"]
+        for r in q(
+            "select strftime(ts_event_day, '%Y-%m-%d') as day, "
+            "approx_quantile(spread, 0.5) as med from minute_book "
+            "where symbol = ? and spread is not null group by 1 order by 1",
+            [sym],
+        )
+    }
+
+    def row_vals(get):
+        return [get(r) for r in daysum]
+
+    metrics = [
+        ("VWAP", lambda r: r["vwap"], lambda v: f"{v:.2f}", "pct"),
+        ("Volume (M sh)", lambda r: r["trade_volume"] / 1e6,
+         lambda v: f"{v:.2f}", "pct"),
+        ("Notional ($B)", lambda r: r["notional_volume"] / 1e9,
+         lambda v: f"{v:.2f}", "pct"),
+        ("Range (bps)", lambda r: r["range_bps"], lambda v: f"{v:.0f}", "pct"),
+        ("Realized vol (bps)", lambda r: r["realized_vol_bps"],
+         lambda v: f"{v:.0f}", "pct"),
+        ("Order-flow imbalance", lambda r: r["order_flow_imbalance"],
+         lambda v: f"{v:+.3f}", "diff"),
+        ("Cancel / trade", lambda r: r["cancel_to_trade_ratio"],
+         lambda v: f"{v:.1f}", "pct"),
+        ("Median spread (cents)", lambda r: spreads.get(r["ts_event_day"]),
+         lambda v: f"{v*100:.0f}", "pct"),
+        ("Cancel / add", lambda r: r["cancel_to_add_ratio"],
+         lambda v: f"{v:.2f}", "pct"),
+        ("Large-order share of adds", lambda r: r["large_order_share"],
+         lambda v: f"{v*100:.1f}%", "pct"),
+        ("Burst ratio (peak / mean minute)", lambda r: r["burst_ratio"],
+         lambda v: f"{v:.1f}\u00d7", "pct"),
+    ]
+
+    panel_rows = []
+    strip_rows = []
+    for label, get, fmt, dmode in metrics:
+        vals = row_vals(get)
+        clean = [v for v in vals if v is not None]
+        med = median(clean) if clean else None
+        sel_v = vals[sel_i]
+        prior_v = vals[prior_i] if prior_i is not None else None
+        if sel_v is not None and med not in (None, 0):
+            delta = ((sel_v - med) / abs(med)) * 100 if dmode == "pct" else sel_v - med
+            delta_s = f"{delta:+.0f}%" if dmode == "pct" else f"{delta:+.3f}"
+        else:
+            delta_s = "—"
+        panel_rows.append(
+            Tr(
+                Td(label, cls="td"),
+                Td(sparkline_svg(vals, sel_i), cls="td sparkcell"),
+                Td(fmt(sel_v) if sel_v is not None else "—", cls="td num"),
+                Td(fmt(prior_v) if prior_v is not None else "—", cls="td num"),
+                Td(fmt(med) if med is not None else "—", cls="td num"),
+                Td(delta_s, cls="td num"),
+            )
+        )
+        strip_rows.append(
+            Div(
+                Span(label, cls="strip-label"),
+                strip_svg(vals, sel_i, day_labels, fmt),
+                cls="strip-row",
+            )
+        )
+
+    dtable = Table(
+        Thead(Tr(Th("Metric", cls="th"), Th("Trend (all days)", cls="th"),
+                 Th(f"Selected ({day})", cls="th"),
+                 Th("Prior day", cls="th"), Th("Window median", cls="th"),
+                 Th("vs median", cls="th"))),
+        Tbody(*panel_rows),
+        cls="dtable",
     )
+    strips = Div(*strip_rows, cls="strips")
 
     content = [
+        page_hdr(sym, day, "Overview"),
         filters_row("/", sym, day, SYMBOLS, DAYS),
         event_chip(sym, day),
         P(
@@ -480,31 +684,31 @@ def home(req, sym: str | None = None, day: str | None = None):
                  else "—", "reconstructed touch"),
             cls="kpi-row",
         ),
-        Div(
-            card("Price and VWAP", "Minute grain, tape prints (crosses included)",
-                 chart(price_opt, 320),
-                 guide_open=True,
+        card("Price and VWAP", "Minute grain, tape prints (crosses included)",
+             chart(price_opt, 400),
+             guide_open=True,
+             tag="tape",
                  guide="Two lines: the last traded price each minute, and VWAP — "
                       "the volume-weighted average price, i.e. what the average "
                       "participant actually paid. Price holding far ABOVE VWAP "
                       "means buying pressure arrived late; far BELOW means late "
                       "selling. Worth a look: price detaching from VWAP in the "
                       "final minutes — who was paying up, and why then?"),
-            card("Aggressor flow", "Buy-initiated up, sell-initiated down, per minute",
-                 chart(vol_opt, 280),
+        card("Aggressor flow", "Buy-initiated up, sell-initiated down, per minute",
+             chart(vol_opt, 320),
+             tag="tape",
                  guide="Every trade has an aggressor — the side that crossed the "
                       "spread. Blue up-bars are shares bought aggressively that "
                       "minute, red down-bars shares sold. Big one-sided bars that "
                       "barely move price can mean someone is absorbing quietly; "
                       "sustained one-sided bars into the close move the closing "
                       "price (see the third surveillance lens)."),
-            cls="grid2",
-        ),
         Div(
             card("Intraday volatility",
                  "Cumulative realized volatility, bps — how far price has "
                  "travelled minute-by-minute by this point in the day",
                  chart(cum_vol_opt, 340),
+                 tag="derived",
                  guide="Each step adds that minute's close-to-close move "
                       "(squared, then square-rooted cumulatively — the standard "
                       "'realized volatility' measure, in basis points). Steep "
@@ -513,6 +717,7 @@ def home(req, sym: str | None = None, day: str | None = None):
                       "pairing with the close-marking lens."),
             card("Volume profile", "Shares traded by 10-cent price bucket",
                  chart(prof_opt, 340),
+                 tag="tape",
                  guide="Where volume actually traded, by price. Fat bars are "
                       "'value areas' where the market genuinely agreed on price; "
                       "thin stretches are pockets price moved through without "
@@ -521,14 +726,31 @@ def home(req, sym: str | None = None, day: str | None = None):
                       "why close-markers like thin sessions."),
             cls="grid2",
         ),
-        card("Days side by side", "Same metrics across all days in the snapshot",
+        card("Day panel", "Every metric for the selected day against the "
+             "whole snapshot: trend, prior day, and window median",
              dtable,
-             guide="The same day-level metrics for every day in the snapshot, "
-                  "so outliers jump out: a range or realized-vol spike that "
-                  "the news doesn't explain, a cancel-to-trade ratio far "
-                  "above the other days, a close far from VWAP."),
+             tag="derived",
+             guide="One row per metric. The sparkline shows every day in the "
+                  "snapshot (selected day as the blue dot); the columns give "
+                  "the exact numbers for the selected day, the prior day, and "
+                  "the median of all days — the last column is how far today "
+                  "sits from typical. At two months of data this becomes a "
+                  "proper baseline read: 'vs median' is the embryo of the "
+                  "z-score alert layer."),
+        card("This day vs. all days", "Where the selected day sits in each "
+             "metric's distribution. End labels are the lowest and highest "
+             "day; every dot in between — including around the median bar — "
+             "is simply another trading day.",
+             strip_legend(day, len(day_labels)),
+             strips,
+             tag="derived",
+             guide_open=True,
+             guide="Every dot is a trading day. The blue dot is the selected "
+                  "day. A blue dot sitting alone at the end of a strip is an "
+                  "outlier day for that metric — pair it with the Day panel "
+                  "numbers and the event chip before concluding anything."),
     ]
-    return (Div(*content, cls="fadein") if hx
+    return (content if hx
             else shell(f"{sym} {day}", *content, active="ov"))
 
 
@@ -543,6 +765,7 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
         "and strftime(ts_event_day,'%Y-%m-%d') = ?", [sym, day])
     lifetimes = lifetimes[0] if lifetimes else {}
     daysum = q("select * from daily_summary where symbol = ? order by ts_event_day", [sym])
+    sel_daily = next((r for r in daysum if r["ts_event_day"] == day), daysum[-1])
 
     x = [mm(r["event_minute"]) for r in minutes]
 
@@ -645,6 +868,7 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
     )
 
     content = [
+        page_hdr(sym, day, "Surveillance"),
         filters_row("/surveillance", sym, day, SYMBOLS, DAYS),
         event_chip(sym, day),
         P(
@@ -659,10 +883,12 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
             lens_badge(1, "SPOOFING — flickering large orders"),
             card(
                 "Large-order cancel behaviour",
-                "Genuine (non-replace) adds above the day's p95 size; red = fully "
-                "removed by standalone cancels within 60s of placement",
+                f"Genuine (non-replace) adds above the day's p95 size "
+                f"(large = >{int(sel_daily['large_order_threshold']):,} shares today); "
+                "red = fully removed by standalone cancels within 60s of placement",
                 spoof_tiles,
                 chart(spoof_opt, 260),
+                tag="derived",
                 guide_open=True,
                 guide="Spoofing places big orders it intends to cancel, to fake "
                       "supply or demand. 'Large' is defined per symbol-day: the "
@@ -674,12 +900,14 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
                       "the flicker signature. The tiles say how long cancelled "
                       "orders actually rested — genuine big interest usually "
                       "waits; sub-5-second lifetimes on one side are the classic "
-                      "tell.",
+                      "tell — an indicator to investigate, never proof: market "
+                      "makers cancel fast for a living.",
             ),
             card(
                 "Cancel pressure vs execution",
                 "Standalone (trader-initiated) cancels against tape trades, per minute",
                 chart(cx_opt, 260),
+                tag="derived",
                 guide="'Standalone' cancels exclude the mechanical ones — the "
                       "cancel inside every trade message and the cancel-leg of "
                       "every order replace — leaving only cancels a human or "
@@ -689,15 +917,17 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
                       "Compare against the spoofing panel — the same behaviour "
                       "seen from the cancel side.",
             ),
-            cls="stack",
+            cls="lens-section",
         ),
         Div(
             lens_badge(2, "LAYERING — stacked displayed depth"),
             card(
                 "Top-of-book imbalance",
-                "(bid depth − ask depth) / their sum at the touch; blue = bid-heavy",
+                "(best-bid depth − best-ask depth) / their sum — top of book only; "
+                "the chart below shows depth across ALL levels; blue = bid-heavy",
                 layer_tiles,
                 chart(imb_opt, 260),
+                tag="book",
                 guide_open=True,
                 guide="Layering stacks multiple orders across price levels on one "
                       "side to manufacture the look of depth. This is the "
@@ -709,15 +939,16 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
             ),
             card(
                 "Displayed depth by side",
-                "Total live displayed quantity per side, per minute",
+                "Total live displayed quantity per side, across all price levels",
                 chart(depth_opt, 260),
+                tag="book",
                 guide="The raw quantity behind the imbalance chart, per side. The "
                       "layering signature here is one side repeatedly ballooning "
                       "and then collapsing — the cancel cascade — while the "
                       "other side stays comparatively stable. Both sides "
                       "breathing together is just an active market.",
             ),
-            cls="stack",
+            cls="lens-section",
         ),
         Div(
             lens_badge(3, "MARKING THE CLOSE — late-session pressure"),
@@ -727,6 +958,7 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
                 "close moves the reference price",
                 close_tiles,
                 chart(close_opt, 260),
+                tag="tape",
                 guide_open=True,
                 guide="The closing print feeds benchmarks, index NAVs and "
                       "option strikes — which is what makes it worth marking. "
@@ -742,6 +974,7 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
                 "Where each day's final print landed relative to its "
                 "volume-weighted average",
                 chart(premium_opt, 240),
+                tag="derived",
                 guide="One bar per day: how far the close ended from the day's "
                       "VWAP, in percent. Closes near VWAP are unremarkable — "
                       "that is just where supply met demand. A large positive "
@@ -749,64 +982,152 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
                       "were lifted away from fair value: either real news, or a "
                       "deliberate push.",
             ),
-            cls="stack",
+            cls="lens-section",
         ),
         P(
-          "Conduct, not intent: these panels flag behaviour consistent with the "
-          "named strategies against each symbol's own patterns. Single venue "
+          "Indicators, not evidence: a high cancel ratio or short order "
+          "lifetime is a signal to investigate, not proof of manipulation — "
+          "market makers legitimately cancel fast and often. What elevates a "
+          "signal is repetition, one-sidedness, and context. Single venue "
           "(XNAS), displayed size only. See Methodology.",
           cls="caveat",
         ),
     ]
-    return (Div(*content, cls="fadein") if hx
+    return (content if hx
             else shell(f"Surveillance — {sym} {day}", *content, active="sv"))
+
+
+METHODOLOGY = [
+    ("The pipeline", "data flow athena iceberg s3 glue dbt bronze silver gold parquet duckdb",
+     "Databento XNAS.ITCH market-by-order data streams through a contract-validated "
+     "Python ingestion into an Apache Iceberg bronze table on S3 (Glue catalog). "
+     "dbt transforms build silver (deduplicated, cleaned) and gold (aggregates) "
+     "layers on Athena. This demo reads a Parquet snapshot of gold — zero live "
+     "AWS dependency."),
+    ("What MBO data is", "market by order itch level3 order book nasdaq totalview message",
+     "Market-by-order ('L3') data: one record per order-book event — every order "
+     "added, executed, modified or cancelled on Nasdaq, with its price, size and "
+     "side. Unlike trade data, it shows what was *displayed*, which is what "
+     "displayed-liquidity manipulation distorts."),
+    ("Message groups — the verified rules", "sequence group t f c execution replace cancel verified semantics",
+     "One exchange message can emit several records sharing a sequence number. "
+     "Verified empirically: an execution is a T (trade) + F (fill) + C (cancel) "
+     "group where only the C changes the book; an order replace is a C (old "
+     "order) + A (new order) pair. Knowing this is what separates real cancels "
+     "from mechanical bookkeeping."),
+    ("Standalone cancels", "trader initiated cancel churn mechanical filter spoofing numerator",
+     "A cancel with no execution and no replace in its message group — the only "
+     "kind a human or algorithm deliberately chose. All surveillance ratios use "
+     "it; raw cancel counts would be inflated ~15% by mechanical legs."),
+    ("Book reconstruction", "order book replay spread depth touch best bid ask validation price-level",
+     "The displayed book is rebuilt by applying every add and cancel to price "
+     "levels, minute by minute. Validated against the tape: 95–99% of prints "
+     "land exactly on the reconstructed best bid/ask at the event instant "
+     "— and book metrics are distinct from tape metrics: the imbalance uses "
+     "top-of-book depth only, while depth totals span all displayed levels "
+     "(a deliberately wrong book scores 2%). Spread, depth and imbalance come "
+     "from this reconstruction."),
+    ("VWAP, TWAP and the close premium", "vwap twap premium fair value benchmark close marking",
+     "VWAP is the volume-weighted average price — what the average participant "
+     "paid. TWAP is the simple time-average. The close premium (close / VWAP − 1) "
+     "measures how far the final print strayed from fair value; large premiums "
+     "on thin days are the marking-the-close signature."),
+    ("Order-flow imbalance (OFI)", "aggressor imbalance buy sell flow direction polarity",
+     "Every trade has an aggressor — the side that crossed the spread. OFI is "
+     "(buy volume − sell volume) / total: +1 = all buying, −1 = all selling. "
+     "Sustained extremes, especially into the close, move prices."),
+    ("Realized volatility", "volatility realized returns bps turbulence risk",
+     "Computed from minute-to-minute percentage moves, cumulated over the day "
+     "and expressed in basis points. Steep sections of the intraday chart are "
+     "turbulent minutes; the day-level figure compares across days."),
+    ("Volume profile", "volume by price value area pockets buckets distribution",
+     "Shares traded at each price level (10-cent buckets). Fat bars are value "
+     "areas where the market agreed; thin stretches are pockets price crossed "
+     "without commitment — cheap to push through, which close-markers exploit."),
+    ("Screen 1 — Spoofing", "spoofing flickering large orders cancel 60 seconds p95 lifetime",
+     "Large orders (above the day's 95th-percentile size) that are fully "
+     "cancelled within 60 seconds of placement. Repeating flicker — big size "
+     "appearing and vanishing without intent to trade — fakes supply or demand. "
+     "Order-lifetime percentiles tell you how long cancelled orders really rested."),
+    ("Screen 2 — Layering", "layering stacked depth levels imbalance cascade one-sided",
+     "Multiple orders stacked across price levels on one side to manufacture "
+     "depth. Signature: top-of-book imbalance pinned near ±1 while price "
+     "refuses to move, then the depth collapses in a cancel cascade."),
+    ("Screen 3 — Marking the close", "marking the close final minutes reference price nav index",
+     "The closing print feeds benchmarks and index NAVs, making it worth "
+     "manipulating. Signature: strong one-sided order flow in the last 30 "
+     "minutes plus a large close-vs-VWAP premium. Honest alternative: index "
+     "rebalancing — baselines over a longer window separate them."),
+    ("Honest limits", "limits intent conduct single venue displayed identities wash trading",
+     "One venue (Nasdaq), displayed size only, no participant identities — so "
+     "wash trading is out of scope by design. The data shows conduct consistent "
+     "with a strategy, never intent — every screen here produces "
+     "indicators to investigate, not evidence; thresholds become alerts only "
+     "as per-symbol "
+     "baselines once a longer window is ingested."),
+]
 
 
 @rt("/methodology")
 def methodology():
+    cards = [
+        Div(
+            Div(H3(t, cls="card-title"), cls="card-head"),
+            Div(P(body, cls="meth-text"), cls="card-body"),
+            cls="card meth-card",
+            data_search=f"{t} {keys}",
+        )
+        for t, keys, body in METHODOLOGY
+    ]
     content = [
         H1("Methodology", cls="page-title"),
-        Div(
-            card(
-                "Pipeline",
-                "Databento XNAS.ITCH MBO → contract-validated streaming ingestion → "
-                "Apache Iceberg medallion (bronze / silver / gold) on S3 + Glue, "
-                "queried with Athena, transformed with dbt. This demo reads a "
-                "Parquet snapshot of the gold layer — zero live AWS dependency.",
-            ),
-            card(
-                "Verified message semantics",
-                "Every metric rests on empirically verified feed semantics: "
-                "executions are T+F+C message groups where the C record alone "
-                "mutates book state; replaces are C+A pairs; a standalone cancel "
-                "(no execution, no replace in its group) is the trader-initiated "
-                "cancel every surveillance ratio uses. The order book is "
-                "reconstructed from price-level intervals and validated to the "
-                "touch: 95–99% of prints land exactly on the reconstructed best "
-                "bid / ask at the event instant.",
-            ),
-            card(
-                "The three screens",
-                "Spoofing: large adds (day p95) fully removed by standalone "
-                "cancels within 60s. Layering: top-of-book imbalance with "
-                "one-sided depth inflation and its cancel cascade. Marking the "
-                "close: last-30-minute order-flow imbalance, volume share, and "
-                "close-to-VWAP premium.",
-            ),
-            card(
-                "Honest limits",
-                "One venue (Nasdaq), displayed size only (reserve/hidden depth "
-                "invisible), no participant identities — so wash trading is out "
-                "of scope by design. The data shows conduct consistent with a "
-                "strategy, never intent; thresholds become alerts only as "
-                "per-symbol, per-time-of-day baselines once a longer window is "
-                "ingested.",
-            ),
-            cls="stack narrow",
+        P(
+            "What this dashboard is built on, in plain language. Type to "
+            "filter — e.g. 'vwap', 'cancel', 'close', 'book'.",
+            cls="intro",
         ),
+        Div(
+            NotStr(
+                "<input id='methsearch' type='search' placeholder='Search terms and topics…' "
+                "autocomplete='off' aria-label='Search methodology' />"
+                "<span id='methcount' class='search-count'></span>"
+            ),
+            cls="searchbox",
+        ),
+        Div(*cards, id="methgrid", cls="meth-list"),
+        NotStr(METH_SEARCH_JS),
     ]
     return shell("Methodology", *content, active="mt")
 
+
+METH_SEARCH_JS = """
+<script>
+(function () {
+  var input = document.getElementById('methsearch');
+  if (!input) return;
+  var cards = Array.prototype.slice.call(
+    document.querySelectorAll('.meth-card'));
+  var count = document.getElementById('methcount');
+  function apply() {
+    var q = input.value.trim().toLowerCase();
+    var shown = 0;
+    cards.forEach(function (c) {
+      var hay = (c.getAttribute('data-search') + ' ' +
+                 c.textContent).toLowerCase();
+      var hit = !q || hay.indexOf(q) !== -1;
+      c.style.display = hit ? '' : 'none';
+      if (hit) shown++;
+    });
+    count.textContent = q ? shown + ' of ' + cards.length : '';
+  }
+  input.addEventListener('input', apply);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { input.value = ''; apply(); }
+  });
+  apply();
+})();
+</script>
+"""
 
 CSS = """
 * { box-sizing: border-box; }
@@ -825,10 +1146,11 @@ CSS = """
 .navlink.active { color: %(ink)s; background: %(surface)s; }
 .page { padding-top: 18px; }
 .page-title { font-size: 24px; font-weight: 700; margin: 8px 0 16px; }
-.fadein { animation: fade 240ms ease; }
+main.page > * { animation: fade 240ms ease; }
 @keyframes fade { from { opacity: 0.35; } to { opacity: 1; } }
 
-.filters { display: flex; gap: 18px; align-items: end; margin: 4px 0 18px; }
+main.page { display: flex; flex-direction: column; gap: 14px; }
+.filters { display: flex; gap: 18px; align-items: end; }
 .fgroup { display: flex; flex-direction: column; gap: 5px; }
 .flabel { font-size: 11px; letter-spacing: 0.08em; color: %(muted)s;
           text-transform: uppercase; }
@@ -836,7 +1158,7 @@ CSS = """
        border-radius: 8px; padding: 7px 10px; font-size: 14px; min-width: 140px; }
 
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-           gap: 12px; margin: 6px 0 18px; }
+           gap: 12px; }
 .kpi-row.small { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
 .tile { background: %(surface)s; border: 1px solid rgba(255,255,255,0.07);
         border-radius: 12px; padding: 12px 14px; }
@@ -856,24 +1178,75 @@ CSS = """
   50%% { box-shadow: 0 0 14px 2px rgba(250,178,25,0.22); }
 }
 
-.chip { display: flex; align-items: center; gap: 10px; margin: -6px 0 14px;
+.chip { display: flex; align-items: center; gap: 10px; margin: 0;
         background: rgba(250,178,25,0.07); border: 1px solid rgba(250,178,25,0.35);
         border-radius: 10px; padding: 8px 12px; max-width: 88ch; }
 .chip-tag { font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em;
             color: %(warn)s; white-space: nowrap; }
 .chip-note { font-size: 12.5px; color: %(ink2)s; line-height: 1.5; }
 
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+         align-items: stretch; }
 @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
-.stack { display: flex; flex-direction: column; gap: 14px; margin-bottom: 20px; }
-.stack.narrow { max-width: 860px; }
+.lens-section { display: flex; flex-direction: column; gap: 10px; }
+/* equal-height pills: cards fill their grid cell, body stretches so
+   shorter content pads instead of shrinking the card */
+.grid2 > .card { height: 100%%; }
+.meth-list { display: flex; flex-direction: column; gap: 14px; }
 .card { background: %(surface)s; border: 1px solid rgba(255,255,255,0.07);
-        border-radius: 14px; overflow: hidden; }
+        border-radius: 14px; overflow: hidden;
+        display: flex; flex-direction: column; }
 .card-head { padding: 14px 16px 0; }
+.card-title-row { display: flex; align-items: center; gap: 10px; }
+.card-tag { font-size: 9.5px; font-weight: 700; letter-spacing: 0.12em;
+            color: %(muted)s; border: 1px solid %(axis)s; border-radius: 5px;
+            padding: 2px 7px; flex: 0 0 auto; }
 .card-title { margin: 0; font-size: 15px; font-weight: 650; }
 .card-sub { margin: 4px 0 0; font-size: 12.5px; color: %(ink2)s;
             max-width: 60ch; }
-.card-body { padding: 10px 12px 12px; }
+.card-body { padding: 10px 12px 12px; flex: 1 1 auto; }
+
+
+.page-hdr { display: flex; align-items: baseline; gap: 14px; }
+.hdr-sym { margin: 0; font-size: 30px; font-weight: 750; letter-spacing: 0.02em;
+           background: linear-gradient(100deg, %(ink)s 60%%, #7fa8e8);
+           -webkit-background-clip: text; background-clip: text;
+           color: transparent; }
+.hdr-meta { display: flex; align-items: center; gap: 10px; }
+.hdr-day { font-size: 15px; color: %(ink2)s; font-variant-numeric: tabular-nums; }
+.hdr-note { font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+            color: %(muted)s; border: 1px solid %(axis)s; border-radius: 6px;
+            padding: 2px 8px; }
+
+.sparkcell svg { display: block; }
+.strips { display: flex; flex-direction: column; }
+.strip { cursor: crosshair; }
+.js-tip { position: fixed; display: none; background: #232322;
+          border: 1px solid #383835; color: #f0efec; font-size: 12px;
+          padding: 4px 9px; border-radius: 6px; pointer-events: none;
+          z-index: 50; white-space: nowrap; }
+.js-tip.show { display: block; }
+.strip-legend { display: flex; align-items: center; gap: 20px;
+                font-size: 12px; color: %(ink2)s; padding: 2px 4px 8px;
+                flex-wrap: wrap; }
+.lg-item { display: inline-flex; align-items: center; gap: 7px; }
+.lg-item svg { display: block; }
+.lg-tick { display: inline-block; width: 2px; height: 12px;
+           background: %(axis)s; }
+.strip-row { display: flex; align-items: center; gap: 14px; padding: 7px 4px;
+             border-bottom: 1px solid %(grid)s; }
+.strip-row:last-child { border-bottom: none; }
+.strip-label { flex: 0 0 170px; font-size: 12.5px; color: %(ink2)s; }
+.strip-row svg { flex: 1 1 auto; max-height: 34px; }
+.strip-empty { flex: 1; height: 30px; }
+.meth-text { margin: 0; font-size: 13.5px; color: %(ink2)s; line-height: 1.65; }
+.searchbox { display: flex; align-items: center; gap: 12px; margin: 0 0 16px;
+             max-width: 860px; }
+.searchbox input { flex: 0 1 380px; background: %(surface)s; color: %(ink)s;
+                   border: 1px solid %(axis)s; border-radius: 10px;
+                   padding: 9px 12px; font-size: 14px; }
+.searchbox input:focus { outline: none; border-color: %(blue)s; }
+.search-count { font-size: 12.5px; color: %(muted)s; }
 
 .lens-badge { display: inline-flex; align-items: center; gap: 8px;
               font-size: 11px; font-weight: 700;
@@ -882,7 +1255,7 @@ CSS = """
                       background: linear-gradient(90deg, %(warn)s, rgba(250,178,25,0.15)); }
 .caveat { color: %(muted)s; font-size: 12.5px; max-width: 90ch; }
 .intro { color: %(ink2)s; font-size: 14px; max-width: 88ch;
-         margin: 2px 0 16px; line-height: 1.55; }
+         margin: 0; line-height: 1.55; }
 .guide { margin-top: 10px; border-top: 1px solid %(grid)s; padding-top: 8px; }
 .guide-summary { cursor: pointer; font-size: 12px; color: %(muted)s;
                  letter-spacing: 0.04em; list-style: none; }
@@ -903,6 +1276,7 @@ CSS = """
 """ % {
     "page": PAGE, "ink": INK, "ink2": INK2, "muted": MUTED,
     "grid": GRID, "axis": AXIS, "surface": SURFACE, "warn": STATUS_WARN,
+    "blue": BLUE,
 }
 
 
