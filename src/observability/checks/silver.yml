@@ -1,0 +1,50 @@
+# SodaCL checks for the silver layer (itch_mbo_cleaned) on Athena.
+# These are POST-BUILD observability: independent of dbt tests, they
+# re-verify the layer's defining guarantees — what silver PROMISES the
+# gold layer. Scanned with database context = market_surveillance_silver.
+
+checks for itch_mbo_cleaned:
+  - row_count > 0
+  - missing_count(message_key) = 0
+  - duplicate_count(message_key) = 0
+  - invalid_count(action) = 0:
+      valid values: [A, M, C, T, F, N]
+  - missing_count(symbol) = 0
+  - missing_count(ts_event) = 0
+  - missing_count(ts_event_day) = 0
+  - invalid_count(price) = 0:
+      valid min: 0.000000001
+      filter: action in ('A', 'C', 'T', 'F')
+
+checks:
+  # Silver's signature guarantee: no synthetic bookkeeping rows.
+  # R (start-of-day book clear) and the day-boundary cleanup burst must
+  # never reappear — a regression here corrupts the book replay.
+  - failed rows:
+      name: no R records
+      fail query: |
+        SELECT * FROM itch_mbo_cleaned WHERE action = 'R'
+
+  - failed rows:
+      name: no day-boundary cleanup burst
+      fail query: |
+        SELECT * FROM itch_mbo_cleaned
+        WHERE action = 'C'
+          AND ts_event < date_trunc('day', ts_event) + interval '1' second
+
+  # T rows must never carry an aggressor order id (Nasdaq placeholder = 0).
+  - failed rows:
+      name: no order id on trades
+      fail query: |
+        SELECT * FROM itch_mbo_cleaned
+        WHERE action = 'T' AND order_id != 0
+
+  # Partition sanity: every (symbol, day) in silver must have meaningful
+  # volume — guards against truncated ingests slipping through merges.
+  - failed rows:
+      name: no near-empty symbol-days
+      fail query: |
+        SELECT symbol, ts_event_day, COUNT(*) AS n
+        FROM itch_mbo_cleaned
+        GROUP BY 1, 2
+        HAVING COUNT(*) < 1000

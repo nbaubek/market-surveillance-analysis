@@ -121,8 +121,15 @@ def ingest(
 
     with tempfile.TemporaryDirectory(prefix="mbo-scratch-") as scratch:
         for item in extractor.extract(spec, Path(scratch)):
+            from src.observability.ingest_checks import observe_payload
+
+            def checked(stream):
+                for table in stream:
+                    observe_payload(table, item.symbol, str(item.day))
+                    yield table
+
             rows = sink.append_chunks(
-                converter.stream(item.path),
+                checked(converter.stream(item.path)),
                 snapshot_properties={
                     "pipeline.symbol": item.symbol,
                     "pipeline.day": str(item.day),

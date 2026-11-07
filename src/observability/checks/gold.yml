@@ -1,0 +1,85 @@
+# SodaCL checks for the gold layer on Athena. Two families:
+# 1. per-table guarantees (SodaCL metrics)
+# 2. CROSS-MODEL reconciliation via custom failed-rows queries — the
+#    tie-outs originally proven by hand during development, now re-run as
+#    an independent observability plane (dbt tests share the build; Soda
+#    does not — defense in depth).
+# Scanned with database context = market_surveillance_gold; silver is
+# referenced fully qualified.
+
+checks for daily_summary:
+  - row_count > 0
+  - missing_count(symbol) = 0
+  - missing_count(ts_event_day) = 0
+  - missing_count(standalone_cancels) = 0
+  - invalid_count(trade_volume) = 0:
+      valid min: 0
+  - invalid_count(order_flow_imbalance) = 0:
+      valid min: -1
+      valid max: 1
+
+checks for hourly_liquidity_metrics:
+  - row_count > 0
+
+checks for minute_book_metrics:
+  - row_count > 0
+
+checks for book_state:
+  - row_count > 0
+  - invalid_count(net_qty) = 0:
+      valid min: 1
+
+checks:
+  # ---- reconciliation: gold sums must equal silver counts, exactly ----
+  - failed rows:
+      name: hourly sums reconcile to silver
+      fail query: |
+        WITH g AS (
+          SELECT sum(messages) AS messages, sum(trades) AS trades,
+                 sum(standalone_cancels) AS standalone
+          FROM hourly_liquidity_metrics
+        ), s AS (
+          SELECT count(*) AS messages,
+                 count_if(action = 'T') AS trades,
+                 0 AS standalone
+          FROM "market_surveillance_silver"."itch_mbo_cleaned"
+        )
+        SELECT g.messages, s.messages, g.trades, s.trades
+        FROM g, s
+        WHERE g.messages != s.messages OR g.trades != s.trades
+
+  # ---- book invariants, re-checked independently of the dbt tests ----
+  - failed rows:
+      name: no crossed or negative-spread minutes
+      fail query: |
+        SELECT * FROM minute_book_metrics
+        WHERE best_bid IS NOT NULL AND best_ask IS NOT NULL
+          AND best_ask - best_bid < 0
+
+  - failed rows:
+      name: book intervals well formed
+      fail query: |
+        SELECT * FROM book_state
+        WHERE valid_to_seq IS NOT NULL AND valid_to_seq <= seq_from
+
+  # ---- semantic sanity ----
+  - failed rows:
+      name: day vwap inside day range
+      fail query: |
+        SELECT * FROM daily_summary
+        WHERE vwap < low - 0.01 OR vwap > high + 0.01
+
+  - failed rows:
+      name: standalone cancels never exceed raw cancels
+      fail query: |
+        SELECT * FROM daily_summary
+        WHERE standalone_cancels > cancels
+
+  - failed rows:
+      name: daily rows exist for every symbol-day in silver
+      fail query: |
+        SELECT DISTINCT s.symbol, s.ts_event_day
+        FROM "market_surveillance_silver"."itch_mbo_cleaned" s
+        LEFT JOIN daily_summary d
+          ON d.symbol = s.symbol AND d.ts_event_day = s.ts_event_day
+        WHERE d.symbol IS NULL

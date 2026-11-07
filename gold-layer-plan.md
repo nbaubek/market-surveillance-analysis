@@ -4,6 +4,37 @@ Aggregates for dashboards and surveillance analytics, built by dbt from
 `itch_mbo_cleaned` (silver). Output feeds a free BI tool (Tableau Public /
 Power BI Desktop) via Athena, per CLAUDE.md.
 
+## Scale-up decision (2026-11-07)
+
+**One month: January 2025, six tickers — MSFT, AAPL, TSLA, ATVI, ROKU,
+TTD** (TSLA/ATVI mids, ROKU/TTD smalls; all Nasdaq-listed in-window).
+January chosen for the surveillance narrative: DeepSeek selloff Jan 27
+(market-wide) + earnings cluster (TSLA/MSFT Jan 29, AAPL Jan 30) — four
+event days in 21 trading days. 2025 books are ~2-4x heavier than the 2019
+sample; a per-symbol Databento cost estimate MUST be reviewed before any
+spend (budget: stay well under the remaining credit). Ingestion strategy
+per the 1-hour budget: per-week batch jobs, ~6 parallel workers; dbt
+backfills in day/week windows; minute_book_metrics goes windowed first.
+
+## Observability & monitoring (2026-11-07)
+
+Soda (soda-core) added as the data-observability plane on three surfaces:
+the **Databento payload** (programmatic scan per converted chunk at
+ingestion, fail-closed), **silver** (post-merge guarantees: exclusions
+hold, key integrity), **gold** (cross-model reconciliation re-checked
+independently of dbt tests — defense in depth). Runner:
+`src/observability/scan.py`; checks in `src/observability/checks/`.
+Positioning vs dbt tests: dbt tests are build-time invariants on the same
+code path; Soda is a separate post-build plane (anomalies, independent
+re-verification, alert-ready).
+
+**Monitoring dashboard** (the long-parked prompt txt): production-pattern
+pipeline observability fed by (a) Iceberg metadata tables — `$snapshots`
+carries our `pipeline.symbol`/`pipeline.day` snapshot properties (the
+ingestion audit: freshness, rows/day, snapshot lineage across layers),
+(b) Soda scan results. Surfaces as a `/monitor` page in the zero-AWS
+demo via two new snapshot exports (pipeline_snapshots, soda_results).
+
 Grain of the primary table: **one row per (symbol, trading day, hour)**,
 with supporting grains at minute (liquidity/bars), price bucket (volume
 profile), and day (dashboard landing). Partitioning: `identity(ts_event_day)`
