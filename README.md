@@ -15,6 +15,10 @@ streaming ingestion → Apache Iceberg medallion (bronze/silver/gold) on AWS
 - Demo dashboard: [`demo/`](demo/) — zero-AWS FastHTML + ECharts app over a
   committed Parquet snapshot (DuckDB), with the three manipulation lenses
   (spoofing, layering, marking the close); Dockerfile for Hugging Face Spaces
+- Knowledge base: [`knowledge-base/`](knowledge-base/) — the project's
+  thinking framework: market fundamentals, verified data semantics, every
+  metric's concept/formula/interpretation/limits, lineage, decision log,
+  and the surveillance mindmap
 
 ## dbt: silver layer
 

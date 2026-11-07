@@ -320,6 +320,9 @@ only as fallback, not as the main-layer substitute.
    Built ahead of the 2025 scale-up because the minute model and the
    upcoming `large_order_share` consume it; window functions run once per
    window instead of once per consumer per rebuild. See the Tier 2 section.
-9. Glossary: collect plain-language definitions of the metrics and market
-   terms (trading-metrics.md defines them technically; a reader-friendly
-   glossary is still missing). Register for a dedicated docs pass.
+9. Glossary: LARGELY DELIVERED by the knowledge base (2026-11-07):
+   knowledge-base/03-metrics-and-indicators.md is the plain-language
+   glossary at full depth (concept / formula / example / interpretation /
+   limits per metric), with 01-market-fundamentals.md covering the market
+   vocabulary. Remaining nicety: a one-page quick-reference glossary for
+   lookups.
