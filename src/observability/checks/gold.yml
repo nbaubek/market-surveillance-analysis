@@ -1,13 +1,14 @@
 # SodaCL checks for the gold layer on Athena. Two families:
-# 1. per-table guarantees (SodaCL metrics)
+# 1. per-table guarantees (schema contracts + SodaCL metrics)
 # 2. CROSS-MODEL reconciliation via custom failed-rows queries — the
 #    tie-outs originally proven by hand during development, now re-run as
 #    an independent observability plane (dbt tests share the build; Soda
 #    does not — defense in depth).
-# Scanned with database context = market_surveillance_gold; silver is
-# referenced fully qualified.
 
 checks for daily_summary:
+  - schema:
+      fail:
+        when required column missing: [symbol, ts_event_day, vwap, order_flow_imbalance, standalone_cancels, cancel_to_trade_ratio, realized_vol_bps, large_order_share]
   - row_count > 0
   - missing_count(symbol) = 0
   - missing_count(ts_event_day) = 0
@@ -19,12 +20,27 @@ checks for daily_summary:
       valid max: 1
 
 checks for hourly_liquidity_metrics:
+  - schema:
+      fail:
+        when required column missing: [symbol, event_hour, messages, standalone_cancels, order_flow_imbalance, ts_event_day]
+  - row_count > 0
+
+checks for minute_liquidity_metrics:
+  - schema:
+      fail:
+        when required column missing: [symbol, event_minute, messages, standalone_cancels, order_flow_imbalance, ts_event_day]
   - row_count > 0
 
 checks for minute_book_metrics:
+  - schema:
+      fail:
+        when required column missing: [symbol, event_minute, best_bid, best_ask, spread, book_imbalance, ts_event_day]
   - row_count > 0
 
 checks for book_state:
+  - schema:
+      fail:
+        when required column missing: [message_key, side, price, net_qty, seq_from, valid_to_seq, ts_from, ts_to, symbol, ts_event_day]
   - row_count > 0
   - invalid_count(net_qty) = 0:
       valid min: 1

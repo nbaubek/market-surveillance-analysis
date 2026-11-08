@@ -39,6 +39,31 @@ def build_configuration(database: str) -> str:
     ])
 
 
+
+def _check_entry(check: dict) -> dict:
+    return {
+        "name": check.get("name") or check.get("identity") or "check",
+        "status": str(check.get("outcome", "unknown")),
+    }
+
+
+def persist_results(target: str, scan: Scan) -> None:
+    """Append this run to the demo monitor's results file (JSON lines)."""
+    import json
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    out = Path(__file__).resolve().parents[2] / "demo" / "data" / "soda_results.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    run = {
+        "target": target,
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "checks": [_check_entry(c) for c in scan.get_scan_results().get("checks", [])],
+    }
+    with out.open("a") as fh:
+        fh.write(json.dumps(run) + "\n")
+
+
 def run(target: str) -> int:
     from pathlib import Path
 
@@ -53,6 +78,7 @@ def run(target: str) -> int:
     scan.execute()
 
     print(scan.get_logs_text())
+    persist_results(target, scan)
     if scan.has_check_fails() or scan.has_error_logs():
         print(f"RESULT: FAIL ({target})")
         return 1

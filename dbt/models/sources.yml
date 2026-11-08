@@ -14,3 +14,36 @@ sources:
           One row per market-message event (add/modify/cancel/trade/fill) per
           symbol. Append-only via daily snapshots carrying pipeline lineage
           (pipeline.symbol, pipeline.day).
+        columns:
+          - name: ts_event
+            description: Exchange event time, microsecond UTC (DBN ns truncated).
+            data_tests: [not_null]
+          - name: ts_recv
+            description: Capture-server receive time, microsecond UTC.
+          - name: rtype
+            description: Record type sentinel; 160 for the MBO schema.
+          - name: publisher_id
+            description: Databento publisher id (dataset/venue).
+          - name: instrument_id
+            description: Numeric instrument id; symbol is the stable key.
+          - name: action
+            description: "A=add, M=modify, C=cancel, T=trade, F=fill, R=book clear, N=none."
+          - name: side
+            description: "A=ask, B=bid, N=not applicable (system rows, cross prints)."
+          - name: price
+            description: DECIMAL(18,9); NULL where DBN carries the UNDEF sentinel (system rows).
+          - name: size
+            description: Quantity in shares.
+          - name: channel_id
+            description: Databento channel; sequence is scoped per channel per day.
+          - name: order_id
+            description: Venue order id; 0 placeholder on all T rows (aggressor never exposed).
+          - name: flags
+            description: Publisher bit field; no additional meaning on XNAS.ITCH.
+          - name: ts_in_delta
+            description: Redundant on this dataset (ts_recv - ts_event); dropped in silver.
+          - name: sequence
+            description: Venue message sequence; identical across records of one message group.
+          - name: symbol
+            description: Requested symbol (Databento mapping).
+            data_tests: [not_null]

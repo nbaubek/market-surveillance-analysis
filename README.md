@@ -15,7 +15,13 @@ streaming ingestion → Apache Iceberg medallion (bronze/silver/gold) on AWS
 - Demo dashboard: [`demo/`](demo/) — zero-AWS FastHTML + ECharts app over a
   committed Parquet snapshot (DuckDB), with the three manipulation lenses
   (spoofing, layering, marking the close); Dockerfile for Hugging Face Spaces
-- Knowledge base: [`knowledge-base/`](knowledge-base/) — the project's
+- Knowledge base: [`knowledge-base/`](knowledge-base/)
+- Data observability (Soda): [`src/observability/`](src/observability/) —
+  payload gate at ingestion, silver and gold scans (values, schemas,
+  cross-layer reconciliation) run in an ephemeral env
+  (`uv run --no-project --with soda-core-athena --with setuptools python
+  src/observability/scan.py silver|gold`); results feed the demo's
+  Monitor page — the project's
   thinking framework: market fundamentals, verified data semantics, every
   metric's concept/formula/interpretation/limits, lineage, decision log,
   and the surveillance mindmap
@@ -95,6 +101,15 @@ dbt test --select itch_mbo_cleaned message_flags    # silver: enforce
 dbt run                                            # gold: build all (full rebuild)
 ```
 
+**Lineage and schema docs** — the DAG plus every model's columns and types,
+including the bronze source (the API contract as landed):
+
+```
+cd dbt
+AWS_PROFILE=my-dev-profile uv run dbt docs generate   # target/catalog.json
+AWS_PROFILE=my-dev-profile uv run dbt docs serve      # http://localhost:8080
+```
+
 With no vars, the model runs in **catch-up mode**: every run re-processes a
 5-day rolling window (`ts_event >= current_date - interval '5' day`). For
 the current historical dataset this is a cheap no-op; it becomes the daily
@@ -131,6 +146,59 @@ ignores the window entirely and rebuilds the table from all of bronze.
 4. Weekends/holidays inside a range are fine — Databento simply has no files
    for non-trading days, so the steps no-op for them. Calendar ranges can be
    passed directly.
+
+## Data lineage
+
+The journey of a message, from exchange feed to dashboard — the same graph
+`dbt docs` renders interactively (with every column and type; see the
+generate command above).
+
+```mermaid
+flowchart TD
+    dbn["Databento XNAS.ITCH batch API"] --> ingest["src/ingestion CLI<br/>streaming · contract-validated<br/>payload checks (fail-closed)"]
+    ingest --> bronze[("bronze · itch_mbo<br/>append-only Iceberg<br/>snapshots carry symbol/day lineage")]
+
+    bronze --> silver["silver · itch_mbo_cleaned<br/>dedup · R + burst excluded<br/>incremental merge on message_key"]
+    silver --> flags["silver · message_flags<br/>group classification<br/>incremental merge"]
+    silver --> bs["gold · book_state<br/>price-level intervals<br/>incremental merge"]
+
+    silver --> hourly["gold · hourly_liquidity_metrics"]
+    flags --> hourly
+    silver --> minute["gold · minute_liquidity_metrics"]
+    flags --> minute
+    hourly --> daily["gold · daily_summary"]
+    minute --> daily
+    silver --> vp["gold · volume_profile"]
+    bs --> mbm["gold · minute_book_metrics"]
+    minute --> mbm
+
+    daily --> export["src/export/gold_snapshot.py<br/>Athena UNLOAD → Parquet"]
+    hourly --> export
+    minute --> export
+    vp --> export
+    mbm --> export
+    silver --> export
+    flags --> export
+    export --> demo["demo/ dashboard (zero-AWS, DuckDB)<br/>Overview · Surveillance · Methodology · Monitor"]
+```
+
+Quality and observability planes sit alongside the data flow — each plane
+is independent of the code path it checks:
+
+```mermaid
+flowchart LR
+    gate["payload gate<br/>pyarrow checks, fail-closed"] -.->|"every chunk"| bronze[("bronze")]
+    dbt["dbt tests (36)<br/>build-time invariants"] -.-> silver[("silver")] & gold[("gold")]
+    soda["Soda scans<br/>values · schemas · reconciliation"] -.->|"post-build"| silver & gold
+    snaps["Iceberg $snapshots<br/>lineage properties"] --> monitor["Monitor page"]
+    sodaresults["Soda scan results"] --> monitor
+    monitor --> demo["demo/"]
+```
+
+Incremental layers (silver, message_flags, book_state) share day-aligned
+merge windows with the ingestion CLI — a day is always the unit of work,
+and every step is idempotent under re-run.
+
 
 ## Bucket lifecycle: the 30-day rule
 

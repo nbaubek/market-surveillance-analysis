@@ -83,6 +83,42 @@ QUERIES: dict[str, str] = {
          and r.order_id = a.order_id
         group by 1, 2, 3
     """,
+    # Pipeline operations audit: every Iceberg snapshot across every table,
+    # with the lineage properties we stamp at ingestion (pipeline.symbol /
+    # pipeline.day). Bronze is append-only so its history is the complete
+    # ingestion log; rebuilt tables (gold) carry history since last rebuild.
+    "pipeline_snapshots": """
+        select 'bronze.itch_mbo' as tbl, cast(committed_at as varchar) as committed_at, snapshot_id, operation,
+               summary['pipeline.symbol'] as symbol,
+               summary['pipeline.day'] as ingested_day,
+               try_cast(summary['added-records'] as bigint) as added_records,
+               try_cast(summary['total-records'] as bigint) as total_records
+        from "market_surveillance_bronze"."itch_mbo$snapshots"
+        union all
+        select 'silver.itch_mbo_cleaned', cast(committed_at as varchar) as committed_at, snapshot_id, operation,
+               null, null,
+               try_cast(summary['added-records'] as bigint),
+               try_cast(summary['total-records'] as bigint)
+        from "market_surveillance_silver"."itch_mbo_cleaned$snapshots"
+        union all
+        select 'silver.message_flags', cast(committed_at as varchar) as committed_at, snapshot_id, operation,
+               null, null,
+               try_cast(summary['added-records'] as bigint),
+               try_cast(summary['total-records'] as bigint)
+        from "market_surveillance_silver"."message_flags$snapshots"
+        union all
+        select 'gold.book_state', cast(committed_at as varchar) as committed_at, snapshot_id, operation,
+               null, null,
+               try_cast(summary['added-records'] as bigint),
+               try_cast(summary['total-records'] as bigint)
+        from "market_surveillance_gold"."book_state$snapshots"
+        union all
+        select 'gold.aggregates', cast(committed_at as varchar) as committed_at, snapshot_id, operation,
+               null, null,
+               try_cast(summary['added-records'] as bigint),
+               try_cast(summary['total-records'] as bigint)
+        from "market_surveillance_gold"."daily_summary$snapshots"
+    """,
     # Lifetime distribution, day grain: orders fully removed by standalone
     # cancels (the spoof-relevant population), how long they rested.
     "lifetimes_day": f"""

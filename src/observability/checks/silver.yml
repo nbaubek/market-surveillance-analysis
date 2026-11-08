@@ -1,9 +1,14 @@
-# SodaCL checks for the silver layer (itch_mbo_cleaned) on Athena.
-# These are POST-BUILD observability: independent of dbt tests, they
-# re-verify the layer's defining guarantees — what silver PROMISES the
-# gold layer. Scanned with database context = market_surveillance_silver.
+# SodaCL checks for the silver layer on Athena.
+# Post-build observability: independent of dbt tests, these re-verify the
+# layer's defining guarantees — what silver PROMISES the gold layer.
+# Schema contracts included: value tests cannot see a dropped/renamed
+# column; types are dbt-owned so only names/presence are asserted.
 
 checks for itch_mbo_cleaned:
+  - schema:
+      fail:
+        when required column missing: [message_key, ts_event, rtype, publisher_id, instrument_id, action, side, price, size, channel_id, order_id, flags, sequence, ts_recv, symbol, ts_event_day]
+        when forbidden column present: [ts_in_delta]
   - row_count > 0
   - missing_count(message_key) = 0
   - duplicate_count(message_key) = 0
@@ -15,6 +20,12 @@ checks for itch_mbo_cleaned:
   - invalid_count(price) = 0:
       valid min: 0.000000001
       filter: action in ('A', 'C', 'T', 'F')
+
+checks for message_flags:
+  - schema:
+      fail:
+        when required column missing: [message_key, action, channel_id, sequence, in_execution_group, in_replace_group, in_cancel_group, is_standalone_cancel, symbol, ts_event_day]
+  - row_count > 0
 
 checks:
   # Silver's signature guarantee: no synthetic bookkeeping rows.

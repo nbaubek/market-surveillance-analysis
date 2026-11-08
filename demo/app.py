@@ -332,6 +332,7 @@ def shell(title: str, *content, active: str = "") -> Html:
                         navlink("/", "Overview", "ov"),
                         navlink("/surveillance", "Surveillance", "sv"),
                         navlink("/methodology", "Methodology", "mt"),
+                        navlink("/monitor", "Monitor", "mn"),
                         cls="navlinks",
                     ),
                     cls="topnav",
@@ -998,73 +999,98 @@ def surveillance(req, sym: str | None = None, day: str | None = None):
 
 
 METHODOLOGY = [
-    ("The pipeline", "data flow athena iceberg s3 glue dbt bronze silver gold parquet duckdb",
-     "Databento XNAS.ITCH market-by-order data streams through a contract-validated "
-     "Python ingestion into an Apache Iceberg bronze table on S3 (Glue catalog). "
-     "dbt transforms build silver (deduplicated, cleaned) and gold (aggregates) "
-     "layers on Athena. This demo reads a Parquet snapshot of gold — zero live "
-     "AWS dependency."),
-    ("What MBO data is", "market by order itch level3 order book nasdaq totalview message",
-     "Market-by-order ('L3') data: one record per order-book event — every order "
-     "added, executed, modified or cancelled on Nasdaq, with its price, size and "
-     "side. Unlike trade data, it shows what was *displayed*, which is what "
-     "displayed-liquidity manipulation distorts."),
-    ("Message groups — the verified rules", "sequence group t f c execution replace cancel verified semantics",
-     "One exchange message can emit several records sharing a sequence number. "
-     "Verified empirically: an execution is a T (trade) + F (fill) + C (cancel) "
-     "group where only the C changes the book; an order replace is a C (old "
-     "order) + A (new order) pair. Knowing this is what separates real cancels "
-     "from mechanical bookkeeping."),
-    ("Standalone cancels", "trader initiated cancel churn mechanical filter spoofing numerator",
-     "A cancel with no execution and no replace in its message group — the only "
-     "kind a human or algorithm deliberately chose. All surveillance ratios use "
-     "it; raw cancel counts would be inflated ~15% by mechanical legs."),
-    ("Book reconstruction", "order book replay spread depth touch best bid ask validation price-level",
-     "The displayed book is rebuilt by applying every add and cancel to price "
-     "levels, minute by minute. Validated against the tape: 95–99% of prints "
-     "land exactly on the reconstructed best bid/ask at the event instant "
-     "— and book metrics are distinct from tape metrics: the imbalance uses "
-     "top-of-book depth only, while depth totals span all displayed levels "
-     "(a deliberately wrong book scores 2%). Spread, depth and imbalance come "
-     "from this reconstruction."),
-    ("VWAP, TWAP and the close premium", "vwap twap premium fair value benchmark close marking",
-     "VWAP is the volume-weighted average price — what the average participant "
-     "paid. TWAP is the simple time-average. The close premium (close / VWAP − 1) "
-     "measures how far the final print strayed from fair value; large premiums "
-     "on thin days are the marking-the-close signature."),
-    ("Order-flow imbalance (OFI)", "aggressor imbalance buy sell flow direction polarity",
-     "Every trade has an aggressor — the side that crossed the spread. OFI is "
-     "(buy volume − sell volume) / total: +1 = all buying, −1 = all selling. "
-     "Sustained extremes, especially into the close, move prices."),
-    ("Realized volatility", "volatility realized returns bps turbulence risk",
-     "Computed from minute-to-minute percentage moves, cumulated over the day "
-     "and expressed in basis points. Steep sections of the intraday chart are "
-     "turbulent minutes; the day-level figure compares across days."),
-    ("Volume profile", "volume by price value area pockets buckets distribution",
-     "Shares traded at each price level (10-cent buckets). Fat bars are value "
-     "areas where the market agreed; thin stretches are pockets price crossed "
-     "without commitment — cheap to push through, which close-markers exploit."),
-    ("Screen 1 — Spoofing", "spoofing flickering large orders cancel 60 seconds p95 lifetime",
-     "Large orders (above the day's 95th-percentile size) that are fully "
-     "cancelled within 60 seconds of placement. Repeating flicker — big size "
-     "appearing and vanishing without intent to trade — fakes supply or demand. "
-     "Order-lifetime percentiles tell you how long cancelled orders really rested."),
-    ("Screen 2 — Layering", "layering stacked depth levels imbalance cascade one-sided",
-     "Multiple orders stacked across price levels on one side to manufacture "
-     "depth. Signature: top-of-book imbalance pinned near ±1 while price "
-     "refuses to move, then the depth collapses in a cancel cascade."),
-    ("Screen 3 — Marking the close", "marking the close final minutes reference price nav index",
-     "The closing print feeds benchmarks and index NAVs, making it worth "
-     "manipulating. Signature: strong one-sided order flow in the last 30 "
-     "minutes plus a large close-vs-VWAP premium. Honest alternative: index "
-     "rebalancing — baselines over a longer window separate them."),
-    ("Honest limits", "limits intent conduct single venue displayed identities wash trading",
-     "One venue (Nasdaq), displayed size only, no participant identities — so "
-     "wash trading is out of scope by design. The data shows conduct consistent "
-     "with a strategy, never intent — every screen here produces "
-     "indicators to investigate, not evidence; thresholds become alerts only "
-     "as per-symbol "
-     "baselines once a longer window is ingested."),
+    ("01 · Market activity — what happened?",
+     "activity orders events adds cancels trades executions question one",
+     "The foundation layer counts what the feed literally contains: orders "
+     "added, cancelled, replaced and executed, trades printed at prices and "
+     "quantities. The dataset is Nasdaq TotalView-ITCH in market-by-order "
+     "form — one record per order-book event, so activity is measurable at "
+     "the order level, not just the trade level. Everything above this "
+     "question is built from these verified events."),
+
+    ("The events we trust — because we verified them",
+     "actions T F C A R sequence message groups verified semantics traps replace execution",
+     "Executions arrive as T+F+C message groups where only the C record "
+     "changes the book; replaces are C+A pairs; a standalone cancel (no "
+     "execution, no replace in its group) is the only cancel anyone chose. "
+     "Two documented behaviors turned out wrong in practice — the "
+     "'start-of-day snapshot' is a single R row, and a day-boundary cleanup "
+     "burst had to be excluded — both found by querying the data, not "
+     "reading the docs. Every rule here was proven against the feed."),
+
+    ("02 · Market conditions — what did it look like?",
+     "conditions price volume vwap volatility spread depth imbalance book tape",
+     "The second layer describes the market's state: prices and their "
+     "behavior (OHLC, VWAP, realized volatility), volume (shares and "
+     "notional), and the displayed book (spread, depth, imbalance). Two "
+     "instruments must never be confused: the TAPE shows what traded; the "
+     "BOOK shows what was offered. The book is reconstructed from "
+     "price-level intervals and validated to the touch — 95–99% of prints "
+     "land exactly on the reconstructed best bid/ask (a deliberately wrong "
+     "book scores 2%)."),
+
+    ("03 · Unusual behavior — was something unusual?",
+     "indicators unusual anomaly cancel ratios order flow imbalance large orders bursts baselines",
+     "The third layer measures behavior against the symbol's own norms: "
+     "cancellation rates (per add, per trade), order-flow imbalance, "
+     "large-order activity (defined per symbol-day as the p95 add size), "
+     "message-rate bursts, and order lifetimes. The dashboard's day panel "
+     "and distribution strips are the embryo of proper baselines — with "
+     "more days they become the statistics that separate unusual from "
+     "ordinary."),
+
+    ("The three screens",
+     "spoofing layering marking the close screens lenses detection candidates",
+     "Three manipulative strategies are addressable with anonymous, "
+     "single-venue, displayed-order data: SPOOFING (large orders placed to "
+     "be cancelled — the flicker signature), LAYERING (stacked one-sided "
+     "depth that evaporates instead of trading), and MARKING THE CLOSE "
+     "(late one-sided flow dragging the reference price). Each lens pairs "
+     "an indicator pattern with its honest twin — the legitimate behavior "
+     "that produces the same signature."),
+
+    ("Indicators, not evidence",
+     "intent evidence market makers legitimate indicator not proof caveat",
+     "The project's standing rule: a high cancel ratio or short order "
+     "lifetime is a signal to investigate, never proof — market makers "
+     "legitimately cancel fast for a living. What elevates a signal is "
+     "repetition, one-sidedness, and context. Alerts, when they exist, "
+     "will be explainable candidate rows with evidence attached, for "
+     "human review."),
+
+    ("04 · Surveillance — does it deserve investigation?",
+     "future detection alerts z-scores baselines roadmap fourth question",
+     "The direction, not the destination: combining indicators and market "
+     "context into explainable candidate alerts, scored against per-symbol, "
+     "per-time-of-day baselines once the longer window is ingested. This "
+     "layer is deliberately last — no alert is credible unless the metrics "
+     "under it are verified, and no metric is trusted unless the semantics "
+     "under it were proven."),
+
+    ("How the numbers travel (lineage)",
+     "lineage bronze silver gold dbt pipeline iceberg snapshot merge replay",
+     "Databento API → contract-validated streaming ingestion → bronze "
+     "(raw, append-only) → silver (deduplicated, synthetic bookkeeping "
+     "excluded) → message flags → gold aggregates and the book replay → "
+     "this dashboard (a committed Parquet snapshot; zero live AWS). "
+     "Incremental layers use day-aligned merge windows; the same day is "
+     "always the unit of work, and re-processing is idempotent."),
+
+    ("Quality is layered too",
+     "tests soda observability reconciliation quality invariants monitor",
+     "dbt tests enforce build-time invariants; Soda re-verifies the layers "
+     "post-build from a code path that shares nothing with dbt (silver "
+     "guarantees, gold-vs-silver reconciliation, book invariants); the "
+     "payload itself is checked at ingestion, fail-closed. The Monitor "
+     "page shows the operational truth: Iceberg snapshot lineage plus the "
+     "latest quality scans."),
+
+    ("Honest limits",
+     "limits single venue displayed hidden identities wash trading bounds",
+     "One venue (Nasdaq) — cross-market strategies are invisible. Displayed "
+     "size only — hidden and reserve liquidity unmeasured. Anonymous "
+     "participants — wash trading is out of scope by design, not omission. "
+     "And always: conduct, never intent."),
 ]
 
 
@@ -1082,8 +1108,10 @@ def methodology():
     content = [
         H1("Methodology", cls="page-title"),
         P(
-            "What this dashboard is built on, in plain language. Type to "
-            "filter — e.g. 'vwap', 'cancel', 'close', 'book'.",
+            "The project's thinking framework — four escalating questions, "
+            "from raw market events to candidate surveillance. The fuller "
+            "story lives in the repo's knowledge-base/; type to filter "
+            "(e.g. 'book', 'cancel', 'evidence', 'lineage').",
             cls="intro",
         ),
         Div(
@@ -1128,6 +1156,150 @@ METH_SEARCH_JS = """
 })();
 </script>
 """
+
+
+
+def _load_soda_results() -> list[dict]:
+    import json
+    from pathlib import Path
+
+    f = Path(__file__).parent / "data" / "soda_results.jsonl"
+    if not f.exists():
+        return []
+    return [json.loads(line) for line in f.read_text().splitlines() if line.strip()]
+
+
+@rt("/monitor")
+def monitor():
+    snaps = q("select * from pipeline_snapshots order by committed_at")
+    bronze = [r for r in snaps if r["symbol"]]
+    soda = _load_soda_results()
+    latest_soda: dict[str, dict] = {}
+    for run in soda:
+        latest_soda[run["target"]] = run
+
+    last_ingest = {}
+    for r in bronze:
+        sym = r["symbol"]
+        if sym not in last_ingest or r["committed_at"] > last_ingest[sym]["committed_at"]:
+            last_ingest[sym] = r
+
+    layers = {}
+    for r in snaps:
+        t = r["tbl"]
+        cur = layers.get(t)
+        if cur is None or r["committed_at"] > cur["committed_at"]:
+            layers[t] = r
+
+    # ingestion timeline (bronze appends, by symbol)
+    tl_x = [r["committed_at"][5:16] for r in bronze]
+    syms = sorted({r["symbol"] for r in bronze})
+    series = []
+    for i, sym in enumerate(syms):
+        series.append(bar(
+            sym,
+            [r["added_records"] if r["symbol"] == sym else 0 for r in bronze],
+            CAT_ORDER[i],
+        ))
+    timeline = base_opt(tl_x, series, legend=True)
+    timeline["dataZoom"] = []
+
+    # coverage: which (symbol, trading day) actually landed in bronze
+    days = sorted({r["ingested_day"][:10] for r in bronze if r["ingested_day"]})
+    cov_syms = sorted({r["symbol"] for r in bronze if r["ingested_day"]})
+    covered = {(r["symbol"], r["ingested_day"][:10]) for r in bronze
+               if r["ingested_day"]}
+    cov_rows = [
+        [sym] + [f"{'\u25cf' if (sym, d) in covered else '\u2014'}" for d in days]
+        for sym in cov_syms
+    ]
+
+    tiles = Div(
+        tile("Pipeline snapshots", f"{len(snaps):,}",
+             f"across {len(layers)} tables, all layers"),
+        tile("Symbols ingested", f"{len(last_ingest)}",
+             ", ".join(f"{s} (last {last_ingest[s]['committed_at'][:10]})"
+                       for s in sorted(last_ingest))),
+        tile("Soda silver", "PASS" if latest_soda.get("silver", {}).get(
+            "checks") and all(c["status"] == "pass"
+            for c in latest_soda["silver"]["checks"]) else "—",
+             f"{len(latest_soda.get('silver', {}).get('checks', []))} checks, "
+             f"{latest_soda.get('silver', {}).get('timestamp', 'never')[:16]}"),
+        tile("Soda gold", "PASS" if latest_soda.get("gold", {}).get(
+            "checks") and all(c["status"] == "pass"
+            for c in latest_soda["gold"]["checks"]) else "—",
+             f"{len(latest_soda.get('gold', {}).get('checks', []))} checks, "
+             f"{latest_soda.get('gold', {}).get('timestamp', 'never')[:16]}"),
+        cls="kpi-row",
+    )
+
+    layer_rows = [
+        [t,
+         r["committed_at"][:19],
+         r["operation"],
+         f"{r['total_records']:,}" if r["total_records"] else "—"]
+        for t, r in sorted(layers.items())
+    ]
+
+    soda_rows = []
+    for target in ("silver", "gold"):
+        run = latest_soda.get(target)
+        if not run:
+            soda_rows.append([target, "no scan recorded", "—"])
+            continue
+        for c in run["checks"]:
+            soda_rows.append([target, c["name"], c["status"].upper()])
+
+    content = [
+        H1("Monitor", cls="page-title"),
+        P(
+            "Pipeline observability, not markets: did the data arrive, did "
+            "it pass its quality checks, and do the layers agree? Freshness "
+            "and audit come from Iceberg snapshot metadata (every append "
+            "and merge, with the symbol/day lineage stamped at ingestion); "
+            "quality comes from the Soda scans over the payload, silver, "
+            "and gold planes.",
+            cls="intro",
+        ),
+        tiles,
+        card("Ingestion timeline", "Rows added per bronze snapshot, by symbol — "
+             "each bar is one Iceberg append with its lineage properties",
+             chart(timeline, 260),
+             tag="pipeline",
+             guide="The ingestion audit: bar height is rows landed per "
+                  "snapshot commit, color is the symbol from the snapshot's "
+                  "lineage properties. Gaps in time are quiet periods "
+                  "(no ingest runs); a missing symbol-day here while it "
+                  "appears above would flag a stuck stage."),
+        card("Ingestion coverage", "Which (symbol, trading day) actually landed "
+             "in bronze — the answer to 'did that day ever arrive?'",
+             data_table(["Symbol"] + days, cov_rows),
+             tag="pipeline",
+             guide="Built from the snapshot lineage properties (pipeline.day), "
+                  "not from row counts: a day shows as covered only if an "
+                  "append for it committed. A dash where data is expected is "
+                  "the operational alarm; a dash where it is not expected "
+                  "(weekend, unselected day) is just the calendar."),
+        card("Layer state", "Latest snapshot per table across bronze, silver, gold",
+             data_table(["Table", "Last snapshot (UTC)", "Operation", "Total rows"],
+                        layer_rows),
+             tag="pipeline",
+             guide="Each row is a table's most recent Iceberg snapshot. "
+                  "'append' means new data landed; 'delete'/'overwrite' "
+                  "appear when merges or rebuilds ran. Total rows is the "
+                  "table's size as of that snapshot."),
+        card("Data quality (Soda)", "Latest scan per plane — every check, "
+             "independently re-verified post-build",
+             data_table(["Plane", "Check", "Status"], soda_rows),
+             tag="quality",
+             guide="The Soda planes: silver guarantees (exclusions hold, key "
+                  "integrity) and gold reconciliation (gold ties to silver, "
+                  "book invariants, VWAP in range) — re-checked by a code "
+                  "path that shares nothing with dbt. A FAIL here with green "
+                  "dbt tests is the defense-in-depth moment."),
+    ]
+    return shell("Monitor", *content, active="mn")
+
 
 CSS = """
 * { box-sizing: border-box; }
