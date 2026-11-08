@@ -118,7 +118,7 @@ by consumers on `message_key`. Single source of truth — never re-derived.
 ## Built: displayed-liquidity / book metrics (Phase 3 replay)
 
 **Objects: `market_surveillance_gold.book_state`** (price-level
-intervals; the replay engine — see `phase3-prototype/` for validation
+intervals; the replay engine — see `knowledge-base/prototype-evidence/` for validation
 evidence) **and `market_surveillance_gold.minute_book_metrics`** (the
 consumable panel; model: `dbt/models/gold/minute_book_metrics.sql`).
 

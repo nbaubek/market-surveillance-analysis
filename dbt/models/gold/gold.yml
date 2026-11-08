@@ -15,7 +15,7 @@ models:
       merge on the triggering event's message_key with the same dual-mode
       window as message_flags. Evaluation conventions for consumers
       (pre-trade vs post-event) are documented in the model header and
-      gold-layer-plan.md. Validated in phase3-prototype/: 0 negative
+      gold-layer-plan.md. Validated in knowledge-base/prototype-evidence/: 0 negative
       level states across all events, 95.7%/99.0% exact-touch prints.
     columns:
       - name: message_key

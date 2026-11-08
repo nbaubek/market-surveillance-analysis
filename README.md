@@ -58,7 +58,7 @@ rebuilt fully each run — aggregate volume is tiny):
   intervals (quantity at (side, price) from one event to the level's
   next event), incremental-merge like the silver models. Reconstructs
   the book at any point without storing per-message book copies;
-  validated in `phase3-prototype/` (0 negative quantities, 96–99%
+  validated in `knowledge-base/prototype-evidence/` (0 negative quantities, 96–99%
   exact-touch prints vs the pre-trade book).
 - **`minute_book_metrics`** — top-of-book panel per (symbol, day,
   minute): best bid/ask, spread, mid, top/total displayed depth, live

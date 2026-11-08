@@ -36,6 +36,8 @@ documentation's claims, the actual bytes.
 | [04-data-lineage.md](04-data-lineage.md) | How each metric originates from raw messages and flows through ingestion → bronze → silver → gold → dashboard |
 | [05-analytical-decisions.md](05-analytical-decisions.md) | Why each approach was chosen and what alternatives were rejected (with the failure that motivated the choice, where there was one) |
 | [06-surveillance-mindmap.md](06-surveillance-mindmap.md) | How market behavior connects to indicators and candidate detection rules — the map from question 03 to question 04 |
+| [07-diagrams.md](07-diagrams.md) | Visual companions: the four questions, order-book mechanics, message-group anatomy, decision trees, replay, strategy→alert maps |
+| [prototype-evidence/](prototype-evidence/) | The receipts: the actual validation queries and results that back the book-replay claims (wrong-book control, event-instant touch, the bug hunt) |
 
 ## How to read it (the learning path)
 
@@ -77,4 +79,4 @@ answer. Suggested order:
 - `dataset-info.md` — Databento's own dataset reference (source material)
 - `demo/` — the dashboard; its "How to read this" guides are distilled
   versions of doc 03's entries
-- `phase3-prototype/` — the validation evidence behind the book metrics
+- `knowledge-base/prototype-evidence/` — the validation evidence behind the book metrics

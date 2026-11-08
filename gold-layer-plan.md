@@ -308,7 +308,7 @@ tie-break, order_id), level state intervals [seq_i, seq_next), live rows
   columns** (2019-07-30). 4-day panel: 3,306 two-sided minutes, 0
   crossed, 0 locked, min spread $0.01, avg top depth ~460/410 shares.
 - Prototype queries and results preserved as evidence in
-  `phase3-prototype/` (also the regression recipe).
+  `knowledge-base/prototype-evidence/` (also the regression recipe).
 
 Remaining: per-order replay deliberately deferred (order-lifetime
 metrics only); MBP-1 external reference optional given the 96–99%
