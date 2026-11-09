@@ -109,3 +109,6 @@ Thumbs.db
 .idea/
 # FastHTML session key (auto-generated secret)
 demo/.sesskey
+
+# Local notes (not for version control)
+/powerbi-demo.txt

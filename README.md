@@ -1,252 +1,363 @@
 # Market Surveillance
 
-Nasdaq TotalView-ITCH market-order-book analytics: Databento → contract-validated
-streaming ingestion → Apache Iceberg medallion (bronze/silver/gold) on AWS
-(S3 + Glue Data Catalog + Athena), orchestrated in Python.
+**Nasdaq order-book manipulation detection** — a data engineering pipeline that ingests market-by-order data, reconstructs the displayed order book, and surfaces surveillance indicators for spoofing, layering, and marking the close.
 
-- Ingestion CLI: [`src/ingestion/`](src/ingestion/) (`uv run --env-file .env python -m src.ingestion.ingest`)
-- Infrastructure: [`infra/`](infra/) (Terraform: bucket, Glue database, Athena workgroup)
-- Transformation: [`dbt/`](dbt/) (silver model — see "dbt: silver layer" below)
-- Iceberg maintenance queries: [`iceberg-maintain-queries.md`](iceberg-maintain-queries.md)
-- Data contract: [`src/ingestion/schema.py`](src/ingestion/schema.py) (see [`CLAUDE.md`](CLAUDE.md) for the full contract notes)
-- Source dataset reference: [`dataset-info.md`](dataset-info.md) (Databento XNAS.ITCH normalization)
-- Metric catalog: [`trading-metrics.md`](trading-metrics.md) (every metric built and
-  planned, why it exists, which table owns it)
-- Demo dashboard: [`demo/`](demo/) — zero-AWS FastHTML + ECharts app over a
-  committed Parquet snapshot (DuckDB), with the three manipulation lenses
-  (spoofing, layering, marking the close); Dockerfile for Hugging Face Spaces
-- Knowledge base: [`knowledge-base/`](knowledge-base/)
-- Orchestration (Dagster+): [`orchestration/`](orchestration/) — assets
-  wrapping the ingestion CLI and dbt, daily partitions, weekday catch-up
-  schedule; runs on Dagster+ Serverless (laptop-free) or locally with
-  `dagster dev`
-- Data observability (Soda): [`src/observability/`](src/observability/) —
-  payload gate at ingestion, silver and gold scans (values, schemas,
-  cross-layer reconciliation) run in an ephemeral env
-  (`uv run --no-project --with soda-core-athena --with setuptools python
-  src/observability/scan.py silver|gold`); results feed the demo's
-  Monitor page — the project's
-  thinking framework: market fundamentals, verified data semantics, every
-  metric's concept/formula/interpretation/limits, lineage, decision log,
-  and the surveillance mindmap
+[![Live Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://market-surveillance-analysis.onrender.com/)
+[![Tests](https://img.shields.io/badge/tests-38%2F38%20pass-brightgreen)]()
+[![Data Quality](https://img.shields.io/badge/soda-28%20checks%20pass-brightgreen)]()
+[![License](https://img.shields.io/badge/license-MIT-blue)]()
 
-## dbt: silver layer
+**Live demo**: [market-surveillance-analysis.onrender.com](https://market-surveillance-analysis.onrender.com/) — four pages: market overview, three manipulation lenses, methodology, and pipeline monitoring.
 
-Eight models today:
+---
 
-**Silver** (`dbt/models/silver/`, Iceberg tables in `market_surveillance_silver`):
-
-- **`itch_mbo_cleaned`** — built incrementally (merge) from the bronze source.
-- **`message_flags`** — silver enrichment: message-group classification, one
-  row per message (join key `message_key`). Materializes the verified
-  execution/replace/standalone-cancel flags so the window functions run once
-  per window instead of once per consumer; incremental merge with the same
-  dual-mode window as `itch_mbo_cleaned`. Single source of truth for cancel
-  classification — consumers join, never re-derive.
-
-**Gold** (`dbt/models/gold/`, Iceberg tables in `market_surveillance_gold`,
-rebuilt fully each run — aggregate volume is tiny):
-
-- **`hourly_liquidity_metrics`** — per (symbol, day, UTC hour): messages,
-  adds, standalone cancels (surveillance-grade: excludes mechanical
-  execution/replace legs via `message_flags`), tape trades, fills, volume,
-  aggressor-side split and order-flow imbalance, notional turnover, tape
-  OHLC, VWAP, avg trade size, range (bps), and cancel ratios. Metric
-  semantics follow the verified message rules in `gold-layer-plan.md`.
-- **`minute_liquidity_metrics`** — minute-grain mirror of the hourly model
-  (incl. order-flow imbalance); answers time-weighted questions (burst
-  detection, TWAP, realized volatility, minute bars for charts).
-- **`volume_profile`** — volume by 10-cent price bucket per (symbol, day)
-  with `volume_share`; the horizontal volume-at-price distribution.
-- **`book_state`** — Phase 3 replay: displayed order book as price-level
-  intervals (quantity at (side, price) from one event to the level's
-  next event), incremental-merge like the silver models. Reconstructs
-  the book at any point without storing per-message book copies;
-  validated in `knowledge-base/prototype-evidence/` (0 negative quantities, 96–99%
-  exact-touch prints vs the pre-trade book).
-- **`minute_book_metrics`** — top-of-book panel per (symbol, day,
-  minute): best bid/ask, spread, mid, top/total displayed depth, live
-  levels, book imbalance. Reconciled exactly to the validated prototype.
-- **`daily_summary`** — one row per (symbol, day): the dashboard landing
-  table. Day OHLC (first/last tape print), recomputed day VWAP, totals,
-  active hours, peak message hour, cancel ratios including the Phase-2
-  `cancel_to_trade_ratio`, order-flow imbalance, large-order screen
-  (p95 threshold / count / share over genuine new adds), and minute-derived
-  burst/TWAP/realized-vol.
-
-**What it does.** Takes the raw MBO stream at the same message-level grain and:
-
-- deduplicates on the full message identity (symbol, ts_event, sequence,
-  order_id, action, price, size — first `ts_recv` wins);
-- excludes `R` book-clear records (the clear-book part of Databento's
-  synthetic start-of-day snapshot — not market activity; one per trading day);
-- adds `message_key`, a null-safe md5 surrogate of the message identity —
-  the MERGE key (raw columns can't be joined on: SQL `=` never matches NULL,
-  and system rows carry NULL price/order_id);
-- derives `ts_event_day` (identity partition column) and drops `ts_in_delta`
-  (redundant on XNAS.ITCH: `ts_recv − ts_event`, both kept).
-
-**Why merge.** Incremental strategy is `merge` on `message_key`: matched
-messages update in place with identical values, unseen ones insert. Since
-Databento delivers complete immutable days, *re-running any date range is
-idempotent* — there is no high-water mark and no forward-only constraint.
-`dbt test` (6 tests) enforces not-null keys and accepted action/side values,
-including that R records never reappear.
-
-### Running
-
-From `dbt/` (profile: `dbt/profiles.yml`, Athena target, `s3_data_dir` pinned
-under `silver/` to stay outside the 30-day lifecycle prefix):
+## What it does
 
 ```
-dbt run  --select itch_mbo_cleaned message_flags    # silver: build (both share
-                                                    # the catch-up/backfill window)
-dbt test --select itch_mbo_cleaned message_flags    # silver: enforce
-dbt run                                            # gold: build all (full rebuild)
+Databento API → streaming ingestion → Iceberg bronze (raw)
+                                        ↓
+              dedup + synthetic-exclusion → Iceberg silver (cleaned)
+                                        ↓
+         verified message semantics → message_flags (classification)
+                                        ↓
+      ┌────────────────────────────────┴──────────────────┐
+      ↓                                                  ↓
+  gold aggregates                              book replay (price-level
+  (OHLC, VWAP, OFI, cancel ratios,           intervals → spread, depth,
+   large orders, vol profile, lifetimes)      imbalance, 96-99% validated)
+      └────────────────────────────────┬──────────────────┘
+                                       ↓
+                            demo dashboard (4 pages)
 ```
 
-**Lineage and schema docs** — the DAG plus every model's columns and types,
-including the bronze source (the API contract as landed):
+Every metric rests on **empirically verified feed semantics** — not documentation claims, but rules proven against the actual data with SQL queries. The order book is reconstructed from price-level intervals and validated to the touch (95–99% of prints land exactly on the reconstructed best bid/ask).
 
-```
-cd dbt
-AWS_PROFILE=my-dev-profile uv run dbt docs generate   # target/catalog.json
-AWS_PROFILE=my-dev-profile uv run dbt docs serve      # http://localhost:8080
-```
-
-With no vars, the model runs in **catch-up mode**: every run re-processes a
-5-day rolling window (`ts_event >= current_date - interval '5' day`). For
-the current historical dataset this is a cheap no-op; it becomes the daily
-scheduled mode once ingestion moves to current data and Dagster lands.
-
-### Backfilling
-
-**Manual range (end date inclusive, partition-pruned):**
-
-```
-dbt run --select itch_mbo_cleaned \
-  --vars '{"start_date": "2025-01-01", "end_date": "2025-01-31"}'
-```
-
-Both vars must be passed together (compiler error otherwise). `--full-refresh`
-ignores the window entirely and rebuilds the table from all of bronze.
-
-**End-to-end backfill workflow (ingest → transform):**
-
-1. Bronze first — the ingestion CLI is idempotent per (symbol, day) via
-   catalog checks, in the same two modes (`--end` is *exclusive*):
-   ```
-   uv run --env-file .env python -m src.ingestion.ingest \
-     --symbols MSFT AAPL --start 2025-01-01 --end 2025-02-01
-   ```
-   Omitting `--start/--end` requests the last `--lookback-days` calendar
-   days (default 5, UTC).
-2. Silver second — always run dbt after ingesting, for the same dates with
-   the end date inclusive (one day later than the CLI's exclusive end).
-3. Re-running any step is safe: bronze skips days already in the catalog,
-   silver re-merges idempotently. Gaps or corrections: re-run bronze for the
-   range, then dbt with the same vars. Full rebuild after a model change:
-   `dbt run --full-refresh --select itch_mbo_cleaned`.
-4. Weekends/holidays inside a range are fine — Databento simply has no files
-   for non-trading days, so the steps no-op for them. Calendar ranges can be
-   passed directly.
-
-## Data lineage
-
-The journey of a message, from exchange feed to dashboard — the same graph
-`dbt docs` renders interactively (with every column and type; see the
-generate command above).
+## Architecture
 
 ```mermaid
 flowchart TD
-    dbn["Databento XNAS.ITCH batch API"] --> ingest["src/ingestion CLI<br/>streaming · contract-validated<br/>payload checks (fail-closed)"]
-    ingest --> bronze[("bronze · itch_mbo<br/>append-only Iceberg<br/>snapshots carry symbol/day lineage")]
+    subgraph AWS["AWS (S3 + Glue + Athena)"]
+        BR[("bronze<br/>raw MBO, append-only")]
+        SI[("silver<br/>deduplicated, cleaned")]
+        FL[("message_flags<br/>group classification")]
+        G1["gold aggregates<br/>(hourly/minute/daily<br/>volume_profile)"]
+        BS[("book_state<br/>price-level intervals")]
+        MB["minute_book_metrics<br/>spread/depth/imbalance"]
+    end
 
-    bronze --> silver["silver · itch_mbo_cleaned<br/>dedup · R + burst excluded<br/>incremental merge on message_key"]
-    silver --> flags["silver · message_flags<br/>group classification<br/>incremental merge"]
-    silver --> bs["gold · book_state<br/>price-level intervals<br/>incremental merge"]
+    subgraph LOCAL["Local / Dagster+"]
+        ING["ingestion CLI<br/>streaming, contract-validated"]
+        DBT["dbt<br/>SQL transformations"]
+        SODA["Soda<br/>data quality scans"]
+        DGS["Dagster+<br/>scheduling, laptop-free runs"]
+    end
 
-    silver --> hourly["gold · hourly_liquidity_metrics"]
-    flags --> hourly
-    silver --> minute["gold · minute_liquidity_metrics"]
-    flags --> minute
-    hourly --> daily["gold · daily_summary"]
-    minute --> daily
-    silver --> vp["gold · volume_profile"]
-    bs --> mbm["gold · minute_book_metrics"]
-    minute --> mbm
+    subgraph DEMO["Zero-AWS Demo"]
+        SNAP["Parquet snapshot<br/>(committed to repo)"]
+        APP["FastHTML + ECharts<br/>4-page dashboard"]
+    end
 
-    daily --> export["src/export/gold_snapshot.py<br/>Athena UNLOAD → Parquet"]
-    hourly --> export
-    minute --> export
-    vp --> export
-    mbm --> export
-    silver --> export
-    flags --> export
-    export --> demo["demo/ dashboard (zero-AWS, DuckDB)<br/>Overview · Surveillance · Methodology · Monitor"]
+    DBN["Databento API"] --> ING --> BR
+    BR --> DBT --> SI --> FL
+    SI --> G1
+    SI --> BS --> MB
+    SODA --> SI & G1
+    DGS --> ING & DBT
+    G1 & MB --> SNAP --> APP
 ```
 
-Quality and observability planes sit alongside the data flow — each plane
-is independent of the code path it checks:
+## Repository structure
+
+```
+market-surveillance/
+├── src/
+│   ├── ingestion/          # Databento → bronze (streaming, idempotent)
+│   │   ├── ingest.py       #   CLI: --start/--end or 5-day catch-up
+│   │   ├── extractor.py    #   Range-job planning, concurrent submission
+│   │   ├── converter.py    #   DBN → Arrow (contract-validated chunks)
+│   │   └── iceberg_sink.py #   PyIceberg append with lineage stamps
+│   ├── observability/      # Soda data quality (3 planes)
+│   │   ├── ingest_checks.py#   Payload gate (fail-closed, pyarrow)
+│   │   ├── scan.py         #   Silver + gold Athena scans (CLI)
+│   │   └── checks/         #   SodaCL YAML (schema + value + reconciliation)
+│   └── export/
+│       └── gold_snapshot.py# Athena UNLOAD → Parquet for the demo
+├── dbt/
+│   ├── models/
+│   │   ├── silver/         # itch_mbo_cleaned, message_flags
+│   │   └── gold/           # 6 aggregate + book models
+│   ├── tests/              # 4 singular invariant tests
+│   ├── dbt_project.yml     # folder → schema/materialization mapping
+│   └── profiles.yml        # Athena connection (no secrets committed)
+├── orchestration/          # Dagster project (laptop-free pipeline)
+│   ├── assets.py           # 4 assets: bronze/silver/gold/soda
+│   ├── resources.py        # PipelineConfig, AwsConfig, DbtConfig
+│   └── schedules.py        # Weekday catch-up schedule
+├── demo/                   # Zero-AWS dashboard
+│   ├── app.py              # FastHTML + ECharts (4 pages)
+│   ├── data/               # Parquet snapshot (committed, ~1 MB)
+│   ├── powerbi-data/       # CSVs + PROMPT.md for Power BI Desktop
+│   └── Dockerfile          # Deploy anywhere (Render, Fly.io, etc.)
+├── knowledge-base/         # The thinking framework (7 docs + evidence)
+│   ├── 01-market-fundamentals.md
+│   ├── 02-dataset-and-events.md
+│   ├── 03-metrics-and-indicators.md
+│   ├── 04-data-lineage.md
+│   ├── 05-analytical-decisions.md
+│   ├── 06-surveillance-mindmap.md
+│   ├── 07-diagrams.md
+│   └── prototype-evidence/ # The validation SQL + results
+├── infra/                  # Terraform (bucket, Glue, Athena workgroup)
+├── dagster_cloud.yaml      # Dagster+ Serverless code location
+└── CLAUDE.md               # AI assistant instructions + data contract
+```
+
+## Data modeling
+
+### dbt models and lineage
+
+Nine models across three layers, managed by dbt and materialized as Iceberg tables on Athena:
 
 ```mermaid
-flowchart LR
-    gate["payload gate<br/>pyarrow checks, fail-closed"] -.->|"every chunk"| bronze[("bronze")]
-    dbt["dbt tests (36)<br/>build-time invariants"] -.-> silver[("silver")] & gold[("gold")]
-    soda["Soda scans<br/>values · schemas · reconciliation"] -.->|"post-build"| silver & gold
-    snaps["Iceberg $snapshots<br/>lineage properties"] --> monitor["Monitor page"]
-    sodaresults["Soda scan results"] --> monitor
-    monitor --> demo["demo/"]
+flowchart TD
+    BR[("bronze · itch_mbo<br/>1:1 raw, append-only")]
+
+    BR --> SI["silver · itch_mbo_cleaned<br/>deduplicated · R + burst excluded<br/>incremental MERGE on message_key"]
+    SI --> FL["silver · message_flags<br/>execution / replace / standalone-cancel<br/>incremental MERGE"]
+
+    SI --> H["gold · hourly_liquidity_metrics<br/>OHLC, VWAP, OFI, cancel ratios"]
+    FL --> H
+    SI --> M["gold · minute_liquidity_metrics<br/>minute-grain tape metrics"]
+    FL --> M
+    H --> D["gold · daily_summary<br/>dashboard landing table"]
+    M --> D
+    SI --> VP["gold · volume_profile<br/>volume by 10¢ price bucket"]
+    SI --> BS[("gold · book_state<br/>price-level intervals<br/>incremental MERGE")]
+    BS --> MBM["gold · minute_book_metrics<br/>spread, depth, imbalance"]
+    M --> MBM
 ```
 
-Incremental layers (silver, message_flags, book_state) share day-aligned
-merge windows with the ingestion CLI — a day is always the unit of work,
-and every step is idempotent under re-run.
+### Silver models
 
+**`itch_mbo_cleaned`** — the cleaned message stream, 1:1 with bronze minus two classes of Databento synthetic bookkeeping (R book-clear records and the day-boundary cleanup burst), deduplicated on a null-safe md5 surrogate key. Incremental merge with a dual-mode window: 5-day rolling catch-up by default, or explicit `start_date`/`end_date` vars for backfilling any range idempotently.
 
-## Bucket lifecycle: the 30-day rule
+**`message_flags`** — one row per message, classifying each by its message group's contents: `in_execution_group`, `in_replace_group`, `in_cancel_group`, `is_standalone_cancel`. This is the vocabulary every surveillance metric is written in — a *standalone cancel* (no execution, no replace in its group) is the only cancel a human or algorithm deliberately chose.
 
-The rule in `infra/main.tf` is a single S3 lifecycle configuration on
-`trading-surveillance-data`:
+### Gold models
 
-- **Filter**: prefix `athena-results/` — nothing else. `bronze/`, `silver/`,
-  and a future `gold/` are structurally invisible to it.
-- **Action**: expiration after 30 days, evaluated per object from its own
-  creation date — a rolling cleanup, not a calendar-day wipe.
-- **Permanence**: plain object deletion; the bucket has versioning disabled,
-  so nothing is recoverable.
+| Model | Grain | What it answers |
+|---|---|---|
+| `hourly_liquidity_metrics` | (symbol, day, hour) | What did the market look like? — OHLC, VWAP, volume, OFI, cancel ratios |
+| `minute_liquidity_metrics` | (symbol, day, minute) | Time-weighted questions — burst detection, TWAP, realized vol, chart bars |
+| `daily_summary` | (symbol, day) | The day at a glance — all headline metrics, large-order screen, close premium |
+| `volume_profile` | (symbol, day, price bucket) | Where did trading concentrate? — volume-at-price distribution |
+| `book_state` | (symbol, day, side, price) | The replay engine — price-level intervals reconstructing the displayed book |
+| `minute_book_metrics` | (symbol, day, minute) | What liquidity was offered? — spread, depth, imbalance at the touch |
 
-Why only this prefix: `athena-results/` is both the Athena workgroup's
-query-output location and dbt-athena's *default* table location. Query
-results are disposable by design, and the rule doubles as self-cleaning for
-orphaned CTAS leftovers — but it also means real table data must never live
-under it, or S3 would delete the table's Parquet files 30 days after write,
-leaving Iceberg snapshots pointing at missing files. That is why
-`dbt/profiles.yml` pins `s3_data_dir` to `silver/`, keeping every dbt-built
-table out of the blast radius.
+### The book replay (Phase 3)
 
-## Ingestion memory profile (measured)
+The displayed order book is reconstructed from **price-level intervals**: for each `(side, price)` level, a running sum of adds minus cancels ordered by `sequence` (never by timestamp — a trade and its book update share identical `ts_event`). One interval row per live level state, from one event to the level's next event. This representation reconstructs the book at any instant without storing a per-message copy.
 
-Peak process RSS (Python 3.13, `resource.getrusage`), including a ~140–147 MB
-baseline for interpreter + databento/pyarrow/pyiceberg imports. Ingestion
-streams per (symbol, day); memory depends only on the chunk size, never on
-the requested date range — the same numbers bound any execution environment
-(container, Lambda, small VM).
+**Validated to the touch**: 95.7% of buy prints and 99.0% of sell prints land exactly at the reconstructed best bid/ask at the event instant (a deliberately wrong book scores 2.3%). Evidence: [`knowledge-base/prototype-evidence/`](knowledge-base/prototype-evidence/).
 
-| Chunk size | Day ingested | Rows | Peak RSS | Snapshots committed |
-|---|---|---|---|---|
-| 100,000 | 2019-07-30 | 1,320,332 | 239 MB (measured) | 14 |
-| 500,000 (default) | ~2M row day | — | ~300–350 MB (estimated) | ~4–5 |
-| whole day | 2019-08-02 | 2,740,840 | 930 MB (measured) | 1 |
+### Verified semantics (the foundation)
 
-Findings:
+Every rule below was tested against the actual feed — not taken from documentation:
 
-- Working memory scales at roughly **280 bytes/row** per chunk (pandas frame +
-  Arrow table + Parquet writer buffers), so whole-day chunking of a ~2.7M-row
-  day costs ~780 MB above baseline; a 5M+ message day would approach ~1.5 GB.
-- **500k rows is the default**: a deliberate middle ground — ~300 MB peak
-  regardless of day volume (comfortably within a ~1 GB Lambda or container),
-  a handful of snapshots per day, files of ~8–10 MB that
-  `OPTIMIZE ... REWRITE DATA` can bin-pack later (see maintenance queries).
-- Override per run with `--chunk-rows` (e.g. `--chunk-rows 10000000` for one
-  snapshot per trading day when snapshot granularity matters more than memory).
+| Rule | Verification |
+|---|---|
+| Executions are T+F+C groups; only C mutates book state | C.size = F.size in 27,350/27,350 groups |
+| T carries the aggressor's side | 95.7%/99.0% of prints at the touch (event-instant) |
+| Replaces are C+A pairs | 54,624 groups on a single day |
+| "Standalone cancel" = no execution, no replace in group | The numerator of every surveillance ratio |
+| Nasdaq's "start-of-day snapshot" = one R row (not re-injected adds) | Measured: zero messages in 5 min after R |
+| Day-boundary cleanup burst (AAPL only) breaks sequence↔time ordering | Found via 1,425 crossed quotes; excluded in silver |
+| Zero M rows exist; modifies manifest as C+A | Action mix across all inspected days |
+
+### Tests and quality gates
+
+| Plane | Tool | What it checks |
+|---|---|---|
+| **Payload** (ingestion) | pyarrow checks, fail-closed | Action/side domains, price completeness, size validity |
+| **Build-time** | 38 dbt tests | Not-null keys, accepted values, replay invariants (non-negative, no inversions) |
+| **Post-build** | 28 Soda checks | Schema contracts, value domains, cross-layer reconciliation |
+
+The Soda plane is independent of dbt's code path — a broken build that passes dbt tests can still fail the Soda reconciliation (defense in depth).
+
+## Replication guide
+
+### Prerequisites
+
+- Python 3.13+ with [`uv`](https://docs.astral.sh/uv/)
+- AWS account (free tier works; idle cost < $1/month)
+- Databento account with API key ([free trial includes credits](https://databento.com))
+- Terraform (for infrastructure; one-time setup)
+- Optional: Dagster+ account for laptop-free orchestration
+
+### Step 1 — Infrastructure (one-time)
+
+```bash
+cd infra
+terraform init
+terraform apply
+```
+
+Creates: S3 bucket (`trading-surveillance-data`), Glue databases (one per layer), Athena workgroup. See `infra/main.tf` for details.
+
+### Step 2 — Environment
+
+```bash
+# Clone and install
+git clone https://github.com/nbaubek/market-surveillance-analysis.git
+cd market-surveillance-analysis
+uv sync
+
+# Configure credentials
+export AWS_PROFILE=my-dev-profile        # or set AWS_ACCESS_KEY_ID etc.
+echo "DATABENTO_API_KEY=your_key" > .env
+```
+
+### Step 3 — Ingest data into bronze
+
+```bash
+# Check cost first (free API call)
+uv run --env-file .env python -c "
+from src.ingestion.client import DatabentoClient
+from src.ingestion.spec import ExtractSpec
+c = DatabentoClient()
+print(c.estimate_cost(ExtractSpec(symbols=['MSFT'], start='2019-07-30', end='2019-08-10')))
+"
+
+# Ingest a range (idempotent: already-ingested days are skipped)
+uv run --env-file .env python -m src.ingestion.ingest \
+  --symbols MSFT --symbols AAPL \
+  --start 2019-07-30 --end 2019-08-10
+```
+
+The extractor plans concurrent range jobs per symbol — Databento processes them in parallel, so the wall-clock is one queue round-trip deep, not one per day.
+
+### Step 4 — Transform (dbt)
+
+```bash
+cd dbt
+
+# Build silver + flags for the ingested range (end date inclusive)
+AWS_PROFILE=my-dev-profile uv run dbt run \
+  --select itch_mbo_cleaned message_flags book_state \
+  --vars '{"start_date": "2019-07-30", "end_date": "2019-08-09"}'
+
+# Build all gold models (full rebuild — tiny outputs)
+AWS_PROFILE=my-dev-profile uv run dbt run
+
+# Verify
+AWS_PROFILE=my-dev-profile uv run dbt test
+```
+
+### Step 5 — Data quality (Soda)
+
+```bash
+cd ..  # repo root
+
+# Silver: 14 checks (schema contract, exclusions, key integrity)
+AWS_PROFILE=my-dev-profile uv run --no-project \
+  --with soda-core-athena --with setuptools \
+  python src/observability/scan.py silver
+
+# Gold: 22 checks (reconciliation, book invariants, vwap sanity)
+AWS_PROFILE=my-dev-profile uv run --no-project \
+  --with soda-core-athena --with setuptools \
+  python src/observability/scan.py gold
+```
+
+### Step 6 — Run the demo
+
+```bash
+# Export gold tables → Parquet snapshot (committed to demo/data/)
+AWS_PROFILE=my-dev-profile uv run python -m src.export.gold_snapshot
+
+# Run locally
+cd demo
+uv sync
+uv run python app.py          # → http://localhost:7860
+```
+
+**Deploy**: the `demo/Dockerfile` works on Render, Fly.io, Railway, or any container platform. The app reads only the committed Parquet files — zero AWS dependency at runtime.
+
+### Step 7 — Orchestrate (optional, Dagster+)
+
+```bash
+# Local development
+export AWS_PROFILE=my-dev-profile
+uv run dagster dev             # → http://localhost:3000
+
+# Deploy to Dagster+ Serverless
+# 1. Sign up at dagster.io → Serverless deployment
+# 2. Connect GitHub repo (dagster_cloud.yaml is already committed)
+# 3. Set env vars: DATABENTO_API_KEY, AWS keys, INGEST_SYMBOLS
+# 4. Deploy — weekday schedule fires at 06:00 UTC on Dagster's compute
+```
+
+### Scaling to more data
+
+The pipeline scales linearly. Rough costs (Databento, per trading day per symbol):
+
+| Symbol type | Cost/day | Rows/day | Notes |
+|---|---|---|---|
+| Large cap (MSFT, AAPL) | $0.15–0.30 | 2–3M | Heaviest books |
+| Mid cap (TSLA, MU) | $0.20–0.45 | 3–5M | TSLA ≈ AAPL-class activity |
+| Small cap (ROKU, TTD) | $0.02–0.05 | 0.3–0.8M | Cheap, still meaningful |
+
+**One month × 6 symbols ≈ $20–40 and ~4–8 hours** (mostly Databento batch-processing wall-clock; submit one range job per symbol and they process concurrently).
+
+## Demo
+
+**Live**: [market-surveillance-analysis.onrender.com](https://market-surveillance-analysis.onrender.com/)
+
+| Page | What it shows |
+|---|---|
+| **Overview** | KPI tiles, price vs VWAP, aggressor flow, intraday volatility, volume profile, day panel with distribution strips |
+| **Surveillance** | Three manipulation lenses: spoofing (large-order cancels + lifetimes), layering (book imbalance + depth), marking the close (late OFI + premium) |
+| **Methodology** | The project's thinking framework — searchable, in plain language |
+| **Monitor** | Pipeline observability: Iceberg snapshot lineage, ingestion coverage, Soda scan results |
+
+**Power BI twin**: [`demo/powerbi-data/`](demo/powerbi-data/) contains CSV exports + `PROMPT.md` (a complete build specification for Claude Code on a Windows machine with Power BI Desktop).
+
+## Tech stack
+
+| Layer | Technology | Why |
+|---|---|---|
+| Ingestion | Python, Databento SDK, PyIceberg | Streaming, contract-validated, memory-bounded |
+| Storage | Apache Iceberg on S3 + Glue | ACID, hidden partitioning, snapshot lineage |
+| Transformation | dbt + dbt-athena (Athena SQL) | Declarative, tested, documented |
+| Query engine | AWS Athena (Trino) | Serverless, pay-per-scan |
+| Data quality | Soda Core (ephemeral env) | Independent verification plane |
+| Orchestration | Dagster / Dagster+ | Daily partitions, laptop-free execution |
+| Dashboard | FastHTML + MonsterUI + ECharts + DuckDB | Zero-AWS, full design control |
+| Infrastructure | Terraform | Reproducible, one-command setup |
+| Alternative BI | Power BI Desktop | Import mode from CSVs, portfolio twin |
+
+## Key design decisions
+
+See [`knowledge-base/05-analytical-decisions.md`](knowledge-base/05-analytical-decisions.md) for the full decision log with rejected alternatives. The short version:
+
+- **Iceberg over raw Parquet/S3**: ACID commits, snapshot lineage (free ingestion audit), hidden partitioning, time travel for debugging.
+- **Merge over append (silver)**: idempotent re-processing of any date range; no high-water mark to break on backfills.
+- **Price-level replay over per-order**: expressible in one SQL window pass, incremental, validated — per-order deferred until an order-level metric justifies it.
+- **Full rebuild (gold)**: outputs are tiny; recomputation is trivially correct — no merge keys, no window alignment, no double-count class of bugs.
+- **Zero-AWS demo**: dashboard reads committed Parquet files; no credentials, no trial-clock dependency, deployable anywhere.
+- **Dagster+ over Lambda**: 15-min cap vs multi-minute ingestion; container packaging for PyIceberg; native scheduling and sensors without EventBridge glue.
+
+## Known limitations
+
+- **Single venue** (Nasdaq) — cross-market manipulation invisible
+- **Displayed size only** — hidden/iceberg liquidity unmeasured
+- **Anonymous participants** — wash trading out of scope by design
+- **Conduct ≠ intent** — every indicator is a signal to investigate, never proof
+
+## Further reading
+
+- [`knowledge-base/`](knowledge-base/) — the full thinking framework (market fundamentals, verified semantics, every metric's formula/interpretation/limits, lineage, decision log, surveillance mindmap, concept diagrams, validation evidence)
+- [`trading-metrics.md`](trading-metrics.md) — compact technical metric catalog
+- [`gold-layer-plan.md`](gold-layer-plan.md) — engineering plan with phase history and open questions
+- [`dataset-info.md`](dataset-info.md) — Databento XNAS.ITCH normalization reference
+- [`iceberg-maintain-queries.md`](iceberg-maintain-queries.md) — OPTIMIZE/VACUUM maintenance
