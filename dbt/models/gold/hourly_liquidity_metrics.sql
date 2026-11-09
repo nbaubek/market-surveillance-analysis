@@ -10,7 +10,7 @@
 }}
 
 -- Gold Phase 1: hourly liquidity metrics, one row per (symbol, trading day,
--- hour) — see gold-layer-plan.md for the verified message-semantics rules
+-- hour) — see knowledge-base/02-dataset-and-events.md for the verified message-semantics rules
 -- these definitions follow.
 --
 -- Message-group flags (Rules 1 and 3) come from the message_flags model

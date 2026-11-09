@@ -357,7 +357,7 @@ See [`knowledge-base/05-analytical-decisions.md`](knowledge-base/05-analytical-d
 ## Further reading
 
 - [`knowledge-base/`](knowledge-base/) — the full thinking framework (market fundamentals, verified semantics, every metric's formula/interpretation/limits, lineage, decision log, surveillance mindmap, concept diagrams, validation evidence)
-- [`trading-metrics.md`](trading-metrics.md) — compact technical metric catalog
-- [`gold-layer-plan.md`](gold-layer-plan.md) — engineering plan with phase history and open questions
+- [`knowledge-base/03-metrics-and-indicators.md`](knowledge-base/03-metrics-and-indicators.md) — compact technical metric catalog
+- [`knowledge-base/02-dataset-and-events.md`](knowledge-base/02-dataset-and-events.md) — engineering plan with phase history and open questions
 - [`dataset-info.md`](dataset-info.md) — Databento XNAS.ITCH normalization reference
 - [`iceberg-maintain-queries.md`](iceberg-maintain-queries.md) — OPTIMIZE/VACUUM maintenance

@@ -11,7 +11,7 @@
 
 -- Gold: minute liquidity metrics, one row per (symbol, trading day, minute
 -- of day, UTC). Same definitions and semantics as hourly_liquidity_metrics
--- (see that model and gold-layer-plan.md) at minute grain; it exists because
+-- (see that model and knowledge-base/02-dataset-and-events.md) at minute grain; it exists because
 -- hourly buckets cannot answer time-weighted questions:
 --
 --   - burst detection (peak vs mean minute message rate) — daily_summary

@@ -15,7 +15,7 @@ models:
       merge on the triggering event's message_key with the same dual-mode
       window as message_flags. Evaluation conventions for consumers
       (pre-trade vs post-event) are documented in the model header and
-      gold-layer-plan.md. Validated in knowledge-base/prototype-evidence/: 0 negative
+      knowledge-base/02-dataset-and-events.md. Validated in knowledge-base/prototype-evidence/: 0 negative
       level states across all events, 95.7%/99.0% exact-touch prints.
     columns:
       - name: message_key
@@ -109,7 +109,7 @@ models:
       Gold Phase 1: hourly liquidity metrics per (symbol, ts_event_day,
       hour) over the silver message stream. Full rebuild every run (gold
       volume is tiny). Cancel semantics follow the verified message rules
-      in gold-layer-plan.md: standalone_cancels excludes execution legs
+      in knowledge-base/02-dataset-and-events.md: standalone_cancels excludes execution legs
       (C inside a T/F message group) and replace legs (C inside an A+C
       group); trades counts tape prints (T) only — F is a separate
       fills metric so executions are never double-counted.
@@ -202,7 +202,7 @@ models:
     description: >
       Minute-grain mirror of hourly_liquidity_metrics: one row per (symbol,
       ts_event_day, UTC minute of day) with the same metric semantics
-      (verified message rules in gold-layer-plan.md; flags via the
+      (verified message rules in knowledge-base/02-dataset-and-events.md; flags via the
       message_flags join). Exists because hourly buckets cannot answer
       time-weighted questions — burst detection, TWAP, realized volatility,
       and minute bars for charts are all derived from this table (see
@@ -297,7 +297,7 @@ models:
       minute_liquidity_metrics. Day open/close come from the hourly values
       (earliest/latest hour with trades), day VWAP is recomputed from summed
       notional/shares. Metric semantics inherit the verified message rules
-      in gold-layer-plan.md unchanged.
+      in knowledge-base/02-dataset-and-events.md unchanged.
     columns:
       - name: symbol
         description: Ticker.
@@ -352,7 +352,7 @@ models:
         description: >
           Day standalone_cancels / trades — classic layering/spoofing
           indicator; MUST use standalone cancels (raw C counts are inflated
-          by execution and replace legs, see Rule 1/3 in gold-layer-plan.md).
+          by execution and replace legs, see Rule 1/3 in knowledge-base/02-dataset-and-events.md).
       - name: taker_buy_volume
         description: Day sum of buyer-initiated volume (T rows, side='B').
       - name: taker_sell_volume

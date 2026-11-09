@@ -11,7 +11,7 @@
 }}
 
 -- Gold Phase 3: order-book state as PRICE-LEVEL INTERVALS — the validated
--- replay (see gold-layer-plan.md, feasibility steps 1-2, and
+-- replay (see knowledge-base/02-dataset-and-events.md, feasibility steps 1-2, and
 -- phase3-prototype/ for the evidence). One row per live level state:
 -- the displayed quantity at (side, price) from event `seq_from` until the
 -- level's next event (`valid_to_seq`), NULL end = still live. This interval

@@ -61,7 +61,7 @@ models:
     description: >
       Silver enrichment, one row per itch_mbo_cleaned message (same
       message_key): message-group classification per the verified Rules 1+3
-      in gold-layer-plan.md. An annotation table, not a copy — consumers
+      in knowledge-base/02-dataset-and-events.md. An annotation table, not a copy — consumers
       join on message_key and take only the flag columns. Incremental merge
       with the same dual-mode window as itch_mbo_cleaned (5-day catch-up
       default; start_date/end_date vars for backfill). This is the single
@@ -82,7 +82,7 @@ models:
       - name: sequence
         description: >
           Denormalized message-group member; resets each trading day
-          (open question 7 in gold-layer-plan.md).
+          (verified empirically; sequence resets daily).
       - name: in_execution_group
         description: >
           TRUE when this message's group (ts_event_day, channel_id,

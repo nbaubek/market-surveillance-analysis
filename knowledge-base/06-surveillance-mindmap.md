@@ -96,7 +96,7 @@ two-sided flow; any "detector" would be theater. Documented exclusion
 5. Baselines before thresholds — an alert without a distribution is a
    guess with formatting.
 
-## Open threads (tracked in gold-layer-plan.md)
+## Open threads (see knowledge-base/06-surveillance-mindmap.md)
 
 - Order-lifecycle metrics (time-to-cancel distributions per order) —
   built at snapshot level; promote to gold when scale lands.

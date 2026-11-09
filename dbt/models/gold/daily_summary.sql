@@ -12,7 +12,7 @@
 -- Gold: daily summary, one row per (symbol, trading day) — the dashboard
 -- landing table. Aggregates hourly_liquidity_metrics, so every metric
 -- semantics caveat there applies here unchanged (verified message rules
--- in gold-layer-plan.md).
+-- in knowledge-base/02-dataset-and-events.md).
 --
 -- Day open/close come from the hourly open/close values: open = open of the
 -- earliest hour that had trades (pre-market hours with book activity but

@@ -10,11 +10,11 @@
 }}
 
 -- Silver enrichment: message-group classification per message (Rules 1 and 3
--- in gold-layer-plan.md). One row per silver message, keyed by message_key —
+-- in knowledge-base/02-dataset-and-events.md). One row per silver message, keyed by message_key —
 -- an ANNOTATION table, not a copy of silver: consumers join on message_key
 -- and take only the flags, keeping this table lean for the 2025 scale-up.
 --
--- Why materialized (gold-layer-plan.md open question 8, resolved): the flags
+-- Why materialized (design decision documented in the knowledge base): the flags
 -- are window functions over the full message stream; computing them as CTEs
 -- inside every consumer re-runs those windows per model per rebuild. Here
 -- they run once per window; consumers do a cheap key join instead. This is

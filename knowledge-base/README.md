@@ -73,9 +73,9 @@ answer. Suggested order:
 
 ## Relationship to the rest of the repo
 
-- `trading-metrics.md` — the compact technical catalog (this KB is the
+- `knowledge-base/03-metrics-and-indicators.md` — the compact technical catalog (this KB is the
   explanatory layer above it)
-- `gold-layer-plan.md` — engineering plan, phase history, open questions
+- `knowledge-base/02-dataset-and-events.md` — engineering plan, phase history, open questions
 - `dataset-info.md` — Databento's own dataset reference (source material)
 - `demo/` — the dashboard; its "How to read this" guides are distilled
   versions of doc 03's entries

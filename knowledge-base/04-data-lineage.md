@@ -87,7 +87,7 @@ production book tied to its prototype 766/766 rows, zero mismatches.
 
 - Snapshot export re-runs in seconds (UNLOAD per table; ~715 KB total).
 - At the planned 2-month × 6-symbol scale, `minute_book_metrics` is the
-  first model to outgrow full rebuilds — the plan (gold-layer-plan.md,
+  first model to outgrow full rebuilds — the design docs (knowledge-base/,
   open q4) prescribes mirroring silver's window pattern, never a
   high-water mark.
 - The demo is deliberately decoupled from AWS: same Parquet, no
