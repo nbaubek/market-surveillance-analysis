@@ -1,12 +1,4 @@
-# Dagster+ Serverless code location configuration.
-# Tells Dagster+ where to find the Definitions object and how to build
-# the environment. The `orchestration` package exports `defs` from its
-# __init__.py (the standard Dagster+ discovery pattern).
-
 locations:
   - location_name: market_surveillance
     code_source:
       package_name: orchestration
-    build:
-      # Build from the repo root; dependencies come from pyproject.toml
-      directory: .
