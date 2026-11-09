@@ -1,3 +1,4 @@
-location_name: market_surveillance
-code_source:
-  package_name: orchestration
+locations:
+  - location_name: market_surveillance
+    code_source:
+      package_name: orchestration
