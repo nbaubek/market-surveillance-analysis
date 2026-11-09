@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/banner.svg" alt="Market Surveillance — Nasdaq order-book manipulation detection" width="720">
+</p>
+
 # Market Surveillance
 
 **Nasdaq order-book manipulation detection** — a data engineering pipeline that ingests market-by-order data, reconstructs the displayed order book, and surfaces surveillance indicators for spoofing, layering, and marking the close.
@@ -308,6 +312,10 @@ The pipeline scales linearly. Rough costs (Databento, per trading day per symbol
 | Small cap (ROKU, TTD) | $0.02–0.05 | 0.3–0.8M | Cheap, still meaningful |
 
 **One month × 6 symbols ≈ $20–40 and ~4–8 hours** (mostly Databento batch-processing wall-clock; submit one range job per symbol and they process concurrently).
+
+### Iceberg snapshot volume
+
+Each trading day produces **~3–5 Iceberg snapshots in bronze** at the default 500k-row chunk size (one snapshot per chunk append). Each snapshot carries `pipeline.symbol` and `pipeline.day` lineage properties — visible on the demo's Monitor page as the ingestion timeline. The full snapshot history is queryable via Athena (`SELECT * FROM "bronze"."itch_mbo$snapshots"`). At one month × 6 symbols, expect ~400–600 bronze snapshots total; silver and gold contribute far fewer (merges and rebuilds produce 1–3 per run).
 
 ## Demo
 

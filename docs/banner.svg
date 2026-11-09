@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 180" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="720" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0d0d0d"/>
+      <stop offset="1" stop-color="#1a1a19"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="720" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3987e5"/>
+      <stop offset="0.5" stop-color="#199e70"/>
+      <stop offset="1" stop-color="#3987e5"/>
+    </linearGradient>
+    <linearGradient id="vol" x1="0" y1="0" x2="720" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3987e5" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#3987e5" stop-opacity="0.05"/>
+    </linearGradient>
+  </defs>
+
+  <!-- background -->
+  <rect width="720" height="180" rx="12" fill="url(#bg)"/>
+  <rect x="1" y="1" width="718" height="178" rx="11" fill="none" stroke="#383835" stroke-width="1"/>
+
+  <!-- candlestick decorative row (subtle, behind text) -->
+  <g opacity="0.12">
+    <rect x="80" y="90" width="6" height="40" fill="#3987e5"/>
+    <rect x="100" y="70" width="6" height="50" fill="#3987e5"/>
+    <rect x="120" y="80" width="6" height="30" fill="#e66767"/>
+    <rect x="140" y="55" width="6" height="60" fill="#3987e5"/>
+    <rect x="160" y="65" width="6" height="45" fill="#e66767"/>
+    <rect x="180" y="45" width="6" height="55" fill="#3987e5"/>
+    <rect x="200" y="75" width="6" height="35" fill="#e66767"/>
+    <rect x="220" y="50" width="6" height="50" fill="#3987e5"/>
+    <rect x="240" y="60" width="6" height="30" fill="#e66767"/>
+    <rect x="260" y="35" width="6" height="55" fill="#3987e5"/>
+    <rect x="280" y="55" width="6" height="40" fill="#e66767"/>
+    <rect x="300" y="30" width="6" height="60" fill="#3987e5"/>
+  </g>
+
+  <!-- spark line (the surveillance signal) -->
+  <path d="M 60 130 C 120 130, 160 95, 200 110 C 240 125, 280 55, 320 85 C 360 115, 400 40, 440 70 C 480 100, 520 50, 560 75 C 600 100, 640 45, 670 55"
+        fill="none" stroke="url(#spark)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.7">
+  </path>
+  <!-- pulse dot at the end -->
+  <circle cx="670" cy="55" r="4" fill="#3987e5">
+    <animate attributeName="r" values="3;5;3" dur="2s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- title -->
+  <text x="360" y="65" font-size="26" font-weight="750" fill="#f0efec" text-anchor="middle" letter-spacing="3">MARKET SURVEILLANCE</text>
+
+  <!-- tagline -->
+  <text x="360" y="92" font-size="13" fill="#c3c2b7" text-anchor="middle">Nasdaq order-book manipulation detection · Iceberg · dbt · Dagster+</text>
+
+  <!-- tech pills -->
+  <g font-size="10" font-weight="600">
+    <rect x="115" y="112" width="70" height="22" rx="11" fill="none" stroke="#3987e5" stroke-width="1"/>
+    <text x="150" y="126" fill="#3987e5" text-anchor="middle">ICEBERG</text>
+
+    <rect x="195" y="112" width="55" height="22" rx="11" fill="none" stroke="#199e70" stroke-width="1"/>
+    <text x="222" y="126" fill="#199e70" text-anchor="middle">dbt</text>
+
+    <rect x="260" y="112" width="65" height="22" rx="11" fill="none" stroke="#d95926" stroke-width="1"/>
+    <text x="292" y="126" fill="#d95926" text-anchor="middle">ATHENA</text>
+
+    <rect x="335" y="112" width="80" height="22" rx="11" fill="none" stroke="#c98500" stroke-width="1"/>
+    <text x="375" y="126" fill="#c98500" text-anchor="middle">DAGSTER+</text>
+
+    <rect x="425" y="112" width="70" height="22" rx="11" fill="none" stroke="#d55181" stroke-width="1"/>
+    <text x="460" y="126" fill="#d55181" text-anchor="middle">ECHARTS</text>
+
+    <rect x="505" y="112" width="90" height="22" rx="11" fill="none" stroke="#898781" stroke-width="1"/>
+    <text x="550" y="126" fill="#898781" text-anchor="middle">SODA · 3 PLANES</text>
+  </g>
+
+  <!-- bottom line -->
+  <text x="360" y="158" font-size="11" fill="#898781" text-anchor="middle">96–99% touch-validated book replay · 38 dbt tests · 28 Soda checks · verified feed semantics</text>
+</svg>
