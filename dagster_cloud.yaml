@@ -1,5 +1,2 @@
 location_name: market_surveillance
-code_source:
-  package_name: orchestration
-build:
-  directory: .
+code_source: orchestration
