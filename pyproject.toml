@@ -7,6 +7,8 @@ requires-python = ">=3.13"
 dependencies = [
     "boto3>=1.43.114",
     "click>=8.5.0",
+    "dagster>=1.13.29",
+    "dagster-webserver>=1.13.29",
     "databento>=0.87.0",
     "dbt-athena-community>=1.11.1",
     "duckdb>=1.5.6",
@@ -14,5 +16,9 @@ dependencies = [
     "pyathena>=3",
     "pydantic>=2.14.1",
     "pyiceberg[pyarrow,pyiceberg-core]>=0.12.0",
+    "python-dotenv>=1.2.4",
     "setuptools>=84.2.1",
 ]
+
+[tool.dagster]
+module_name = "orchestration"

@@ -76,44 +76,66 @@ class DatabentoClient:
             "cost estimate",
         )
 
-    def submit_day_job(self, spec: ExtractSpec, symbol: str, day: date) -> str:
-        """Submit a one-day batch job for a single symbol; return its job ID."""
+    def submit_range_job(
+        self, spec: ExtractSpec, symbol: str, start: date, end_exclusive: date
+    ) -> str:
+        """Submit a batch job for a date range of one symbol; return its ID.
+
+        `split_duration="day"` keeps the output as per-day files, so per-day
+        lineage stamping and ExtractedDay semantics survive range jobs.
+        """
         job = self._with_retries(
             lambda: self._client.batch.submit_job(
                 dataset=spec.dataset,
                 symbols=[symbol],
                 schema=spec.data_schema,
-                start=day,
-                end=day + timedelta(days=1),
+                start=start,
+                end=end_exclusive,
                 split_duration="day",
             ),
-            f"{symbol} {day}",
+            f"{symbol} {start}..{end_exclusive}",
         )
         return job["id"]
 
-    def wait_until_done(
+    def wait_until_all_done(
         self,
-        job_id: str,
-        label: str,
-        on_state: Callable[[str], None] | None = None,
+        jobs: list[tuple[str, str]],
+        on_state: Callable[[str, str], None] | None = None,
     ) -> None:
-        """Poll job state until done, reporting state changes via callback."""
+        """Poll all (job_id, label) pairs until every job is done.
+
+        One poll cycle queries every outstanding job — submitted jobs are
+        processed by Databento concurrently, so this wait is one queue
+        round-trip deep, not one per job.
+        """
         deadline = time.monotonic() + self.poll_timeout_seconds
-        state: str | None = None
-        while True:
-            details = self._with_retries(
-                lambda: self._client.batch.get_job_details(job_id), label
-            )
-            if details["state"] != state:
+        states: dict[str, str] = {}
+        pending = {job_id for job_id, _ in jobs}
+        while pending:
+            for job_id, label in jobs:
+                if job_id not in pending:
+                    continue
+                details = self._with_retries(
+                    lambda j=job_id: self._client.batch.get_job_details(j),
+                    label,
+                )
                 state = details["state"]
-                if on_state is not None:
-                    on_state(state)
-            if state == "done":
-                return
+                if state != states.get(job_id):
+                    states[job_id] = state
+                    if on_state is not None:
+                        on_state(f"{label}: {state}")
+                if state == "done":
+                    pending.discard(job_id)
+                elif state in ("rejected", "failed"):
+                    raise RuntimeError(
+                        f"{label}: batch job {job_id} ended in state {state}"
+                    )
+            if not pending:
+                break
             if time.monotonic() > deadline:
+                stuck = ", ".join(f"{l}: {states.get(j, '?')}" for j, l in jobs if j in pending)
                 raise TimeoutError(
-                    f"{label}: job {job_id} still {state} after "
-                    f"{self.poll_timeout_seconds:.0f}s"
+                    f"jobs still pending after {self.poll_timeout_seconds:.0f}s: {stuck}"
                 )
             time.sleep(self.poll_interval_seconds)
 

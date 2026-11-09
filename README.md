@@ -16,6 +16,10 @@ streaming ingestion → Apache Iceberg medallion (bronze/silver/gold) on AWS
   committed Parquet snapshot (DuckDB), with the three manipulation lenses
   (spoofing, layering, marking the close); Dockerfile for Hugging Face Spaces
 - Knowledge base: [`knowledge-base/`](knowledge-base/)
+- Orchestration (Dagster+): [`orchestration/`](orchestration/) — assets
+  wrapping the ingestion CLI and dbt, daily partitions, weekday catch-up
+  schedule; runs on Dagster+ Serverless (laptop-free) or locally with
+  `dagster dev`
 - Data observability (Soda): [`src/observability/`](src/observability/) —
   payload gate at ingestion, silver and gold scans (values, schemas,
   cross-layer reconciliation) run in an ephemeral env
