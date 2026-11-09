@@ -1,6 +1,6 @@
-location_name: market_surveillance
-image: python:3.13-slim
-code_source:
-  package_name: orchestration
-build:
-  directory: .
+locations:
+  - location_name: market_surveillance
+    code_source:
+      package_name: orchestration
+    build:
+      directory: .
