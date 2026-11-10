@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/banner.svg" alt="Market Surveillance — Nasdaq order-book manipulation detection" width="720">
-</p>
-
 # Market Surveillance
 
 **Nasdaq order-book manipulation detection** — a data engineering pipeline that ingests market-by-order data, reconstructs the displayed order book, and surfaces surveillance indicators for spoofing, layering, and marking the close.
@@ -10,6 +6,10 @@
 [![Tests](https://img.shields.io/badge/tests-38%2F38%20pass-brightgreen)]()
 [![Data Quality](https://img.shields.io/badge/soda-28%20checks%20pass-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
+
+<p align="center">
+  <img src="docs/banner.svg" alt="Market Surveillance — Nasdaq order-book manipulation detection" width="720">
+</p>
 
 **Live demo**: [market-surveillance-analysis.onrender.com](https://market-surveillance-analysis.onrender.com/) — four pages: market overview, three manipulation lenses, methodology, and pipeline monitoring.
 
@@ -343,6 +343,26 @@ Each trading day produces **~3–5 Iceberg snapshots in bronze** at the default 
 | Dashboard | FastHTML + MonsterUI + ECharts + DuckDB | Zero-AWS, full design control |
 | Infrastructure | Terraform | Reproducible, one-command setup |
 | Alternative BI | Power BI Desktop | Import mode from CSVs, portfolio twin |
+
+### Ingestion internals (how data flows from API to Iceberg)
+
+No persistent local staging — data streams from Databento's API through in-memory conversion into the bronze Iceberg table. Local disk is scratch only (a temp directory for the `.dbn.zst` file, deleted after processing). Memory is bounded by chunk size, never by the requested date range.
+
+```
+Databento batch API (.dbn.zst files)
+    ↓  DBNStore.from_file() — zstd-compressed native format
+    ↓  to_df(count=500_000) — yields pandas DataFrames in chunks
+    ↓  pa.Table.from_pandas() — Arrow columnar in memory
+    ↓  price conversion: float64 → DECIMAL(18,9), UNDEF sentinel → NULL
+    ↓  schema cast + contract validation (fail on any violation)
+    ↓  payload observability checks (action/side domains, price completeness)
+    ↓  PyIceberg append — one snapshot per chunk, lineage properties stamped
+    ↓  S3 (bronze Iceberg table)
+```
+
+**Memory profile** (measured, Python 3.13): ~280 bytes/row across pandas frame + Arrow table + Parquet writer buffers. At the default 500k-row chunk size, peak RSS is ~300 MB regardless of day volume. A whole-day chunk (2.7M rows) peaks at ~930 MB — still container-friendly but 3× the default.
+
+**What "zero local staging" means**: the `.zst` file downloads to a temp dir, is processed chunk-by-chunk (never fully loaded), and each chunk commits its own Iceberg snapshot before the next starts. The temp file is deleted after the last chunk. Idempotency is catalog-based (`has_day` checks Iceberg partitions already ingested), not file-based — so re-running the same date range skips days already in bronze without re-downloading.
 
 ## Key design decisions
 
